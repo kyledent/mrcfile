@@ -19,6 +19,7 @@ import os
 import warnings
 from typing import BinaryIO, cast
 
+from . import utils
 from .mrcfile import MrcFile
 
 
@@ -157,12 +158,15 @@ class GzipMrcFile(MrcFile):
                 BinaryIO, gzip.GzipFile(fileobj=self._fileobj, mode="wb")
             )  # cast needed because of awkward IO types
 
-            # Arrays converted to bytes so gzip can calculate sizes correctly
+            # Header and extended header are small, so a copy is fine. The
+            # data block is streamed in chunks: tobytes() on a large volume
+            # doubles peak memory for no benefit, and gzip can calculate
+            # sizes from memoryview slices just as well.
             if self.header is not None:
                 self._iostream.write(self.header.tobytes())
             if self.extended_header is not None:
                 self._iostream.write(self.extended_header.tobytes())
             if self.data is not None:
-                self._iostream.write(self.data.tobytes())
+                utils.write_array_in_chunks(self._iostream, self.data)
             self._iostream.flush()
             self._fileobj.truncate()

@@ -36,7 +36,7 @@ from __future__ import annotations
 import math
 import string
 import sys
-from typing import Literal
+from typing import BinaryIO, Literal
 
 import numpy as np
 
@@ -280,6 +280,33 @@ def normalise_byte_order(byte_order: str) -> Literal["<", ">"]:
         return "<" if sys.byteorder == "little" else ">"
     else:
         raise ValueError(f"Unrecognised byte order indicator '{byte_order}'")
+
+
+#: Bytes per write in :func:`write_array_in_chunks`.
+WRITE_CHUNK_BYTES = 1 << 24  # 16 MiB
+
+
+def write_array_in_chunks(
+    stream: "BinaryIO", array: np.ndarray, chunk_bytes: int = WRITE_CHUNK_BYTES
+) -> None:
+    """Write an array to a stream without duplicating it in memory.
+
+    ``stream.write(array.tobytes())`` builds a complete copy of the array
+    first, so writing a 4 GB volume to a compressed stream needs 8 GB resident.
+    Writing :class:`memoryview` slices of a contiguous view of the array
+    achieves the same result with a bounded buffer, and compressors do not care
+    where the chunk boundaries fall.
+
+    Args:
+        stream: A writeable binary stream.
+        array: The array to write. Copied only if it is not already contiguous,
+            which is the same condition under which ``tobytes()`` would copy.
+        chunk_bytes: Maximum bytes per write call.
+    """
+    contiguous = np.ascontiguousarray(array)
+    view = memoryview(contiguous.reshape(-1).view(np.uint8))
+    for start in range(0, view.nbytes, chunk_bytes):
+        stream.write(view[start : start + chunk_bytes])
 
 
 #: Elements per block in :func:`calculate_stats`. 65536 float32 values is

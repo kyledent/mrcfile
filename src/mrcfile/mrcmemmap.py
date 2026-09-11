@@ -15,6 +15,7 @@ Classes:
 from __future__ import annotations
 
 import mmap
+from contextlib import suppress
 import os
 import warnings
 
@@ -169,6 +170,15 @@ class MrcMemmap(MrcFile):
                 self._data = None
             else:
                 raise
+
+        # MRC data is almost always consumed front to back: a whole-volume
+        # read, a statistics sweep, or a slice-by-slice write. Telling the
+        # kernel so lets it use a more aggressive readahead than its default
+        # guess. Advisory only, and not available on every platform, so any
+        # failure here is ignored.
+        if self._data is not None:
+            with suppress(Exception):
+                self._data._mmap.madvise(mmap.MADV_SEQUENTIAL)
 
         # Check if the file is the expected size.
         if self.data is not None:
