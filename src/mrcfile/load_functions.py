@@ -32,6 +32,7 @@ def new(
     data: np.ndarray | None = None,
     *,
     compression: str | None = None,
+    compresslevel: int | None = None,
     overwrite: bool = False,
 ) -> MrcFile:
     """Create a new MRC file.
@@ -47,6 +48,10 @@ def new(
             It's good practice to name compressed files with an appropriate
             extension (for example, ``.mrc.gz`` for gzip) but this is not
             enforced.
+        compresslevel: The compression level to use when ``compression`` is
+            set: 0 to 9 for gzip, or 1 to 9 for bzip2. The default is
+            :data:`None`, which uses level 9, the highest. Lower levels write
+            faster but may compress less.
         overwrite: Flag to force overwriting of an existing file. If
             :data:`False` and a file of the same name already exists, the file
             is not overwritten and an exception is raised.
@@ -59,19 +64,27 @@ def new(
         :exc:`ValueError`: If the file already exists and overwrite is
             :data:`False`.
         :exc:`ValueError`: If the compression format is not recognised.
+        :exc:`ValueError`: If ``compresslevel`` is given without
+            ``compression``, or is out of range for the compression format.
 
     Warns:
         RuntimeWarning: If the data array contains Inf or NaN values.
     """
-    NewMrc = MrcFile  # noqa: N806
+    mrc: MrcFile
     if compression == "gzip":
-        NewMrc = GzipMrcFile  # noqa: N806
+        mrc = GzipMrcFile(
+            name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
+        )
     elif compression == "bzip2":
-        NewMrc = Bzip2MrcFile  # noqa: N806
+        mrc = Bzip2MrcFile(
+            name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
+        )
     elif compression is not None:
         raise ValueError(f"Unknown compression format '{compression}'")
-
-    mrc = NewMrc(name, mode="w+", overwrite=overwrite)
+    elif compresslevel is not None:
+        raise ValueError("compresslevel can only be used with compression")
+    else:
+        mrc = MrcFile(name, mode="w+", overwrite=overwrite)
     if data is not None:
         mrc.set_data(data)
     return mrc
@@ -183,6 +196,7 @@ def write(
     *,
     overwrite: bool = False,
     voxel_size: float | tuple[float, float, float] | np.recarray | None = None,
+    compresslevel: int | None = None,
 ) -> None:
     """Write a new MRC file.
 
@@ -204,10 +218,14 @@ def write(
             is not overwritten and an exception is raised.
         voxel_size: float | 3-tuple
             The voxel size to be written in the file header.
+        compresslevel: The compression level to use if the name ends with
+            ``.gz`` or ``.bz2``. See :func:`new` for the accepted values.
 
     Raises:
         :exc:`ValueError`: If the file already exists and overwrite is
             :data:`False`.
+        :exc:`ValueError`: If ``compresslevel`` is given for a name that does
+            not imply compression, or is out of range.
 
     Warns:
         RuntimeWarning: If the data array contains Inf or NaN values.
@@ -218,7 +236,13 @@ def write(
         compression = "gzip"
     elif name.endswith(".bz2"):
         compression = "bzip2"
-    with new(name, data, compression=compression, overwrite=overwrite) as mrc:
+    with new(
+        name,
+        data,
+        compression=compression,
+        compresslevel=compresslevel,
+        overwrite=overwrite,
+    ) as mrc:
         if voxel_size is not None:
             mrc.voxel_size = voxel_size
 

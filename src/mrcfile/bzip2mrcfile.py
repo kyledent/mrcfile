@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import bz2
 import os
-from typing import BinaryIO, cast
+from typing import BinaryIO, Literal, cast
 
 from . import utils
 from .mrcfile import MrcFile
@@ -26,9 +26,45 @@ class Bzip2MrcFile(MrcFile):
     """:class:`~mrcfile.mrcfile.MrcFile` subclass for handling bzip2-compressed
     files.
 
-    Usage is the same as for :class:`~mrcfile.mrcfile.MrcFile`.
+    Usage is the same as for :class:`~mrcfile.mrcfile.MrcFile`, except that the
+    constructor also accepts ``compresslevel``: the bzip2 compression level, from
+    1 to 9, to use when the file is written. The default is 9.
 
     """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        name: str | os.PathLike[str],
+        mode: Literal["r", "r+", "w+"] = "r",
+        *,
+        overwrite: bool = False,
+        permissive: bool = False,
+        header_only: bool = False,
+        compresslevel: int | None = None,
+    ) -> None:
+        """Initialise a new :class:`Bzip2MrcFile` object.
+
+        Takes the same arguments as :class:`~mrcfile.mrcfile.MrcFile`, plus
+        ``compresslevel``, the bzip2 level (1 to 9) to write with. The default,
+        :data:`None`, uses level 9.
+
+        Raises:
+            :exc:`ValueError`: If ``compresslevel`` is not between 1 and 9. This
+                is checked before the file is opened, so an invalid level never
+                truncates an existing file.
+        """
+        if compresslevel is not None and not 1 <= compresslevel <= 9:
+            raise ValueError(
+                f"bzip2 compresslevel must be between 1 and 9, not {compresslevel}"
+            )
+        self._compresslevel = 9 if compresslevel is None else compresslevel
+        super().__init__(
+            name,
+            mode,
+            overwrite=overwrite,
+            permissive=permissive,
+            header_only=header_only,
+        )
 
     def __repr__(self) -> str:
         """Return a string representation of the Bzip2MrcFile object."""
@@ -72,7 +108,8 @@ class Bzip2MrcFile(MrcFile):
         if not self._read_only and self._iostream is not None:
             self._iostream.close()
             self._iostream = cast(
-                BinaryIO, bz2.BZ2File(self._fname, mode="w")
+                BinaryIO,
+                bz2.BZ2File(self._fname, mode="w", compresslevel=self._compresslevel),
             )  # cast needed because of awkward IO types
 
             # Header and extended header are small, so a copy is fine. The

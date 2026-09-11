@@ -119,6 +119,14 @@ files very easily:
    ...
    GzipMrcFile('tmp2.mrc.gz', mode='r')
 
+   >>> # The compression level can be set too. The default is the highest level,
+   >>> # which is the slowest; lower levels write faster but may compress less:
+   >>> mrcfile.write('tmp3.mrc.gz', example_data, compresslevel=1)
+   >>> mrcfile.read('tmp3.mrc.gz')
+   array([[ 0,  1,  2,  3],
+          [ 4,  5,  6,  7],
+          [ 8,  9, 10, 11]], dtype=int8)
+
 Closing files and writing to disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

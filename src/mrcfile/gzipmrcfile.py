@@ -17,7 +17,7 @@ import builtins
 import gzip
 import os
 import warnings
-from typing import BinaryIO, cast
+from typing import BinaryIO, Literal, cast
 
 from . import utils
 from .mrcfile import MrcFile
@@ -26,9 +26,45 @@ from .mrcfile import MrcFile
 class GzipMrcFile(MrcFile):
     """:class:`~mrcfile.mrcfile.MrcFile` subclass for handling gzipped files.
 
-    Usage is the same as for :class:`~mrcfile.mrcfile.MrcFile`.
+    Usage is the same as for :class:`~mrcfile.mrcfile.MrcFile`, except that the
+    constructor also accepts ``compresslevel``: the gzip compression level, from
+    0 to 9, to use when the file is written. The default is 9.
 
     """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        name: str | os.PathLike[str],
+        mode: Literal["r", "r+", "w+"] = "r",
+        *,
+        overwrite: bool = False,
+        permissive: bool = False,
+        header_only: bool = False,
+        compresslevel: int | None = None,
+    ) -> None:
+        """Initialise a new :class:`GzipMrcFile` object.
+
+        Takes the same arguments as :class:`~mrcfile.mrcfile.MrcFile`, plus
+        ``compresslevel``, the gzip level (0 to 9) to write with. The default,
+        :data:`None`, uses level 9.
+
+        Raises:
+            :exc:`ValueError`: If ``compresslevel`` is not between 0 and 9. This
+                is checked before the file is opened, so an invalid level never
+                truncates an existing file.
+        """
+        if compresslevel is not None and not 0 <= compresslevel <= 9:
+            raise ValueError(
+                f"gzip compresslevel must be between 0 and 9, not {compresslevel}"
+            )
+        self._compresslevel = 9 if compresslevel is None else compresslevel
+        super().__init__(
+            name,
+            mode,
+            overwrite=overwrite,
+            permissive=permissive,
+            header_only=header_only,
+        )
 
     def __repr__(self) -> str:
         """Return a string representation of the GzipMrcFile object."""
@@ -155,7 +191,10 @@ class GzipMrcFile(MrcFile):
             self._iostream.close()
             self._fileobj.seek(0)
             self._iostream = cast(
-                BinaryIO, gzip.GzipFile(fileobj=self._fileobj, mode="wb")
+                BinaryIO,
+                gzip.GzipFile(
+                    fileobj=self._fileobj, mode="wb", compresslevel=self._compresslevel
+                ),
             )  # cast needed because of awkward IO types
 
             # Header and extended header are small, so a copy is fine. The
