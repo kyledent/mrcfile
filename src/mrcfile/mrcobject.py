@@ -957,7 +957,7 @@ class MrcObject:
         # Check data statistics
         real_rms = real_min = real_max = real_mean = 0
         if self.header.rms >= 0:
-            if self.data is not None and len(self.data > 0):
+            if self.data is not None and self.data.size > 0:
                 real_rms = self.data.std()
             if not np.isclose(real_rms, self.header.rms, rtol=0.01):
                 log(
@@ -966,7 +966,7 @@ class MrcObject:
                 )
                 valid = False
         if self.header.dmin < self.header.dmax:
-            if self.data is not None and len(self.data > 0):
+            if self.data is not None and self.data.size > 0:
                 real_min = self.data.min()
                 real_max = self.data.max()
             if self.header.dmin != real_min:
@@ -982,7 +982,7 @@ class MrcObject:
                 )
                 valid = False
         if self.header.dmean > min(self.header.dmin, self.header.dmax):
-            if self.data is not None and len(self.data > 0):
+            if self.data is not None and self.data.size > 0:
                 real_mean = self.data.mean(dtype=np.float64)
             if not np.isclose(real_mean, self.header.dmean, rtol=0.01):
                 log(
