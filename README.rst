@@ -47,7 +47,8 @@ Key Features
 * Clean, simple API for access to MRC files
 * Easy to install and use
 * Validation of files according to the MRC2014 format
-* Seamless support for gzip and bzip2 files
+* Seamless support for gzip, bzip2 and Zstandard files (Zstandard needs Python 3.14
+  or the ``backports.zstd`` package)
 * Memory-mapped file option for fast random access to very large files
 * Asynchronous opening option for background loading of multiple files
 * Runs in Python 3, on Linux, Mac OS X and Windows

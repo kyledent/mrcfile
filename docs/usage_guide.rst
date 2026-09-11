@@ -127,6 +127,11 @@ files very easily:
           [ 4,  5,  6,  7],
           [ 8,  9, 10, 11]], dtype=int8)
 
+Zstandard-compressed files (``.mrc.zst``) are supported too, through
+``compression='zstd'`` or a file name ending in ``.zst``. Zstandard needs Python
+3.14 or later, or the ``backports.zstd`` package on earlier versions (``pip
+install mrcfile[zstd]``). It is typically much faster than gzip.
+
 Closing files and writing to disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -166,7 +171,8 @@ For most purposes, the top-level functions in :mod:`mrcfile` should be all you
 need to open MRC files, but it is also possible to directly instantiate
 :class:`~mrcfile.mrcfile.MrcFile` and its subclasses,
 :class:`~mrcfile.gzipmrcfile.GzipMrcFile`,
-:class:`~mrcfile.bzip2mrcfile.Bzip2MrcFile` and
+:class:`~mrcfile.bzip2mrcfile.Bzip2MrcFile`,
+:class:`~mrcfile.zstdmrcfile.ZstdMrcFile` and
 :class:`~mrcfile.mrcmemmap.MrcMemmap`:
 
 .. doctest::
@@ -1258,6 +1264,10 @@ The following classes are provided by the mrcfile.py library:
 
 * :class:`~mrcfile.bzip2mrcfile.Bzip2MrcFile`: Reads and writes MRC data using
   compressed bzip2 files.
+
+* :class:`~mrcfile.zstdmrcfile.ZstdMrcFile`: Reads and writes MRC data using
+  Zstandard-compressed files. This needs Python 3.14 or later, or the
+  ``backports.zstd`` package.
 
 * :class:`~mrcfile.mrcmemmap.MrcMemmap`: Uses a memory-mapped data array, for
   fast random access to very large data files. MrcMemmap overrides various

@@ -145,3 +145,13 @@ mrcfile.validator module
     :undoc-members:
     :private-members:
     :show-inheritance:
+
+mrcfile.zstdmrcfile module
+--------------------------
+
+.. automodule:: mrcfile.zstdmrcfile
+    :special-members: __init__
+    :members:
+    :undoc-members:
+    :private-members:
+    :show-inheritance:

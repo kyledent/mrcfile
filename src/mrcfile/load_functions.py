@@ -25,6 +25,7 @@ from .future_mrcfile import FutureMrcFile
 from .gzipmrcfile import GzipMrcFile
 from .mrcfile import MrcFile
 from .mrcmemmap import MrcMemmap
+from .zstdmrcfile import ZstdMrcFile
 
 
 def new(
@@ -43,15 +44,18 @@ def new(
             <numpy.ndarray>`. The default is :data:`None`, to create an empty
             file.
         compression: The compression format to use. Acceptable values are:
-            :data:`None` (the default; for no compression), ``'gzip'`` or
-            ``'bzip2'``.
+            :data:`None` (the default; for no compression), ``'gzip'``,
+            ``'bzip2'`` or ``'zstd'``. Zstandard needs Python 3.14 or later, or
+            the ``backports.zstd`` package.
             It's good practice to name compressed files with an appropriate
             extension (for example, ``.mrc.gz`` for gzip) but this is not
             enforced.
         compresslevel: The compression level to use when ``compression`` is
-            set: 0 to 9 for gzip, or 1 to 9 for bzip2. The default is
-            :data:`None`, which uses level 9, the highest. Lower levels write
-            faster but may compress less.
+            set: 0 to 9 for gzip, 1 to 9 for bzip2, or up to 22 for Zstandard,
+            whose negative levels are faster still. The default is
+            :data:`None`, which uses level 9 for gzip and bzip2 and Zstandard's
+            own default level for zstd. Lower levels write faster but may
+            compress less.
         overwrite: Flag to force overwriting of an existing file. If
             :data:`False` and a file of the same name already exists, the file
             is not overwritten and an exception is raised.
@@ -66,6 +70,8 @@ def new(
         :exc:`ValueError`: If the compression format is not recognised.
         :exc:`ValueError`: If ``compresslevel`` is given without
             ``compression``, or is out of range for the compression format.
+        :exc:`ImportError`: If ``compression`` is ``'zstd'`` and Zstandard
+            support is not available.
 
     Warns:
         RuntimeWarning: If the data array contains Inf or NaN values.
@@ -77,6 +83,10 @@ def new(
         )
     elif compression == "bzip2":
         mrc = Bzip2MrcFile(
+            name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
+        )
+    elif compression == "zstd":
+        mrc = ZstdMrcFile(
             name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
         )
     elif compression is not None:
@@ -100,7 +110,8 @@ def open(  # noqa: A001
     """Open an MRC file.
 
     This function opens both normal and compressed MRC files. Supported
-    compression formats are: gzip, bzip2.
+    compression formats are: gzip, bzip2 and Zstandard. Zstandard needs Python
+    3.14 or later, or the ``backports.zstd`` package.
 
     It is possible to use this function to create new MRC files (using mode
     ``w+``) but the :func:`new` function is more flexible.
@@ -135,6 +146,8 @@ def open(  # noqa: A001
             an existing file.)
         :exc:`OSError`: If the mode is ``r`` or ``r+`` and the file does not
             exist.
+        :exc:`ImportError`: If the file is Zstandard-compressed and Zstandard
+            support is not available.
 
     Warns:
         RuntimeWarning: If the file appears to be a valid MRC file but the data
@@ -167,6 +180,8 @@ def open(  # noqa: A001
                 NewMrc = GzipMrcFile  # noqa: N806
             elif start[:2] == b"BZ":
                 NewMrc = Bzip2MrcFile  # noqa: N806
+            elif start[:4] == b"\x28\xb5\x2f\xfd":
+                NewMrc = ZstdMrcFile  # noqa: N806
     return NewMrc(name, mode=mode, permissive=permissive, header_only=header_only)
 
 
@@ -208,8 +223,8 @@ def write(
 
     Args:
         name: The file name to use, as a string or :class:`~pathlib.Path`. If the name
-            ends with ``.gz`` or ``.bz2``, the file will be compressed using gzip or
-            bzip2 respectively.
+            ends with ``.gz``, ``.bz2`` or ``.zst``, the file will be compressed using
+            gzip, bzip2 or Zstandard respectively.
         data: Data to put in the file, as a :class:`numpy array
             <numpy.ndarray>`. The default is :data:`None`, to create an empty
             file.
@@ -219,7 +234,7 @@ def write(
         voxel_size: float | 3-tuple
             The voxel size to be written in the file header.
         compresslevel: The compression level to use if the name ends with
-            ``.gz`` or ``.bz2``. See :func:`new` for the accepted values.
+            ``.gz``, ``.bz2`` or ``.zst``. See :func:`new` for the accepted values.
 
     Raises:
         :exc:`ValueError`: If the file already exists and overwrite is
@@ -236,6 +251,8 @@ def write(
         compression = "gzip"
     elif name.endswith(".bz2"):
         compression = "bzip2"
+    elif name.endswith(".zst"):
+        compression = "zstd"
     with new(
         name,
         data,

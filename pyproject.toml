@@ -44,6 +44,9 @@ optional-dependencies.dev = [
     "pytest",
     "ruff ~=0.13.0",
 ]
+optional-dependencies.zstd = [
+    "backports.zstd; python_version < '3.14'",
+]
 
 [project.urls]
 homepage = "https://github.com/ccpem/mrcfile"

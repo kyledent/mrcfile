@@ -105,8 +105,8 @@ def validate(name: str | os.PathLike[str], print_file: TextIO | None = None) -> 
     documentation of the :mod:`warnings` module for information on how to
     suppress or capture warning output.
 
-    Because the file is opened by calling :func:`open`, gzip- and
-    bzip2-compressed MRC files can be validated easily using this function.
+    Because the file is opened by calling :func:`open`, gzip-, bzip2- and
+    Zstandard-compressed MRC files can be validated easily using this function.
 
     After the file has been opened, it is checked for problems. The tests are:
 
