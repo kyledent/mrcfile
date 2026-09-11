@@ -418,8 +418,14 @@ class MrcObjectTest(unittest.TestCase):
         header = self.mrcobject.header
         assert header.dmin == np.float32(vol.min())
         assert header.dmax == np.float32(vol.max())
-        assert header.dmean == np.float32(vol.mean(dtype=np.float32))
-        assert header.rms == np.float32(vol.std(dtype=np.float32))
+        # FORK DEVIATION (see DEVIATIONS.md, D1). Upstream asserts bit-equality
+        # with numpy's float32-accumulated mean and std. This fork accumulates
+        # in float64, which is strictly more accurate: for this data the fork
+        # produces the nearest float32 to the exact value and upstream is one
+        # ULP low. Assert against the float64 reference instead, which both
+        # implementations should round to.
+        assert header.dmean == np.float32(vol.mean(dtype=np.float64))
+        assert header.rms == np.float32(vol.std(dtype=np.float64))
 
     def test_stats_are_updated_on_request(self):
         x, y = 4, 3

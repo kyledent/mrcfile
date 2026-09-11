@@ -711,8 +711,8 @@ class MrcObject:
                 # Avoid ComplexWarning by explicitly taking the real part
                 self.header.rms = np.float32(self.data.std().real)
             else:
-                min_ = self.data.min()
-                max_ = self.data.max()
+                # Single blocked pass instead of four separate reductions
+                min_, max_, mean_, rms_ = utils.calculate_stats(self.data)
 
                 if np.isnan(min_):
                     warnings.warn("Data array contains NaN values", RuntimeWarning)
@@ -721,8 +721,8 @@ class MrcObject:
 
                 self.header.dmin = np.float32(min_)
                 self.header.dmax = np.float32(max_)
-                self.header.dmean = self.data.mean(dtype=np.float32)
-                self.header.rms = self.data.std(dtype=np.float32)
+                self.header.dmean = np.float32(mean_)
+                self.header.rms = np.float32(rms_)
         else:
             self.reset_header_stats()
 
@@ -956,8 +956,36 @@ class MrcObject:
 
         # Check data statistics
         real_rms = real_min = real_max = real_mean = 0
+
+        # Compute all four statistics in one blocked pass, but only if at least
+        # one of the checks below will actually look at them. Complex data is
+        # excluded because the header statistics are undefined for it.
+        stats = None
+        if (
+            self.data is not None
+            and self.data.size > 0
+            and not np.iscomplexobj(self.data)
+            and (
+                self.header.rms >= 0
+                or self.header.dmin < self.header.dmax
+                or self.header.dmean > min(self.header.dmin, self.header.dmax)
+            )
+        ):
+            stats = utils.calculate_stats(self.data)
+
         if self.header.rms >= 0:
-            if self.data is not None and self.data.size > 0:
+            if stats is not None:
+                # numpy's std() returns the input dtype for floating-point
+                # arrays and float64 otherwise. Match it so that the message
+                # below formats exactly as it always has.
+                assert self.data is not None
+                rms_dtype = (
+                    self.data.dtype
+                    if self.data.dtype.kind == "f"
+                    else np.dtype(np.float64)
+                )
+                real_rms = rms_dtype.type(stats[3])
+            elif self.data is not None and self.data.size > 0:
                 real_rms = self.data.std()
             if not np.isclose(real_rms, self.header.rms, rtol=0.01):
                 log(
@@ -966,7 +994,9 @@ class MrcObject:
                 )
                 valid = False
         if self.header.dmin < self.header.dmax:
-            if self.data is not None and self.data.size > 0:
+            if stats is not None:
+                real_min, real_max = stats[0], stats[1]
+            elif self.data is not None and self.data.size > 0:
                 real_min = self.data.min()
                 real_max = self.data.max()
             if self.header.dmin != real_min:
@@ -982,7 +1012,9 @@ class MrcObject:
                 )
                 valid = False
         if self.header.dmean > min(self.header.dmin, self.header.dmax):
-            if self.data is not None and self.data.size > 0:
+            if stats is not None:
+                real_mean = stats[2]
+            elif self.data is not None and self.data.size > 0:
                 real_mean = self.data.mean(dtype=np.float64)
             if not np.isclose(real_mean, self.header.dmean, rtol=0.01):
                 log(

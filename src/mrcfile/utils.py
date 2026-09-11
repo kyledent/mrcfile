@@ -33,6 +33,7 @@ Functions
 
 from __future__ import annotations
 
+import math
 import string
 import sys
 from typing import Literal
@@ -279,6 +280,91 @@ def normalise_byte_order(byte_order: str) -> Literal["<", ">"]:
         return "<" if sys.byteorder == "little" else ">"
     else:
         raise ValueError(f"Unrecognised byte order indicator '{byte_order}'")
+
+
+#: Elements per block in :func:`calculate_stats`. 65536 float32 values is
+#: 256 KiB, which stays resident in L2 on typical hardware so that all four
+#: reductions read from cache and main memory is traversed exactly once.
+STATS_BLOCK_SIZE = 65536
+
+
+def calculate_stats(
+    data: np.ndarray, block_size: int = STATS_BLOCK_SIZE
+) -> tuple[np.generic, np.generic, float, float]:
+    """Calculate min, max, mean and RMS deviation in a single pass.
+
+    This is equivalent to calling :meth:`~numpy.ndarray.min`,
+    :meth:`~numpy.ndarray.max`, :meth:`~numpy.ndarray.mean` and
+    :meth:`~numpy.ndarray.std` separately, but traverses the array once instead
+    of roughly five times, and uses a fixed small amount of scratch memory
+    instead of allocating a temporary the same size as the data. The saving is
+    largest for memory-mapped arrays, where each avoided pass is an avoided
+    read of the whole file.
+
+    Sums are accumulated in double precision about a provisional mean taken
+    from the first block. This avoids the catastrophic cancellation that a
+    naive sum-of-squares suffers when the mean is large relative to the spread,
+    as it is for mode 6 data centred near 30000.
+
+    ``min`` and ``max`` are returned in the array's own dtype so that they
+    compare against header values exactly as the equivalent numpy calls would.
+    NaN is propagated to both, matching numpy's behaviour.
+
+    Args:
+        data: The data array. Must not be empty, and must not be complex.
+        block_size: Number of elements to process at a time.
+
+    Returns:
+        A 4-tuple of ``(min, max, mean, rms)``.
+
+    Raises:
+        :exc:`ValueError`: If the array is empty.
+    """
+    flat = np.ravel(data)
+    n = flat.size
+    if n == 0:
+        raise ValueError("Cannot calculate statistics for an empty array")
+
+    # Provisional mean from the first block, used as a shift for stability
+    shift = float(np.mean(flat[: min(block_size, n)], dtype=np.float64))
+
+    min_ = max_ = None
+    nan_seen = False
+    total = 0.0
+    total_sq = 0.0
+
+    for start in range(0, n, block_size):
+        chunk = flat[start : start + block_size]
+        chunk_min = chunk.min()
+        chunk_max = chunk.max()
+        if np.isnan(chunk_min) or np.isnan(chunk_max):
+            nan_seen = True
+        elif min_ is None:
+            min_, max_ = chunk_min, chunk_max
+        else:
+            if chunk_min < min_:
+                min_ = chunk_min
+            if chunk_max > max_:
+                max_ = chunk_max
+
+        # Cache-resident widening: the copy never leaves L2
+        deviations = chunk.astype(np.float64) - shift
+        total += float(deviations.sum())
+        total_sq += float(np.dot(deviations, deviations))
+
+    if nan_seen or min_ is None:
+        nan = np.array(np.nan, dtype=np.float32)[()]
+        min_ = max_ = nan
+
+    offset = total / n
+    mean = shift + offset
+    variance = total_sq / n - offset * offset
+    if math.isnan(variance):
+        rms = math.nan
+    else:
+        # Clamp tiny negatives from rounding on constant data
+        rms = math.sqrt(variance) if variance > 0.0 else 0.0
+    return min_, max_, mean, rms
 
 
 def spacegroup_is_volume_stack(ispg: int) -> bool:
