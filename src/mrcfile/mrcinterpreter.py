@@ -369,7 +369,7 @@ class MrcInterpreter(MrcObject):
             else:
                 raise ValueError(msg)
 
-        data_arr, bytes_read = self._read_bytearray_from_stream(nbytes)
+        data_arr, bytes_read = self._read_array_from_stream(shape, dtype)
 
         if bytes_read < nbytes:
             msg = (
@@ -383,8 +383,38 @@ class MrcInterpreter(MrcObject):
             else:
                 raise ValueError(msg)
 
-        self._data = np.frombuffer(data_arr, dtype=dtype).reshape(shape)
+        self._data = data_arr
         self._data.flags.writeable = not self._read_only
+
+    def _read_array_from_stream(
+        self, shape: tuple, dtype: np.dtype
+    ) -> tuple[np.ndarray, int]:
+        """Read a numpy array directly from the stream.
+
+        This allocates the destination array with :func:`numpy.empty` and reads
+        into a byte view of it. The older :meth:`_read_bytearray_from_stream`
+        route allocates a :class:`bytearray`, which CPython zero-fills before
+        the read overwrites it, so the whole data block gets written twice.
+        Skipping the fill roughly halves the cost of a large read.
+
+        If the data block is short, the tail of the returned array holds
+        uninitialised memory. Callers must check the returned byte count and
+        discard the array if it is short, which is what
+        :meth:`_read_data_from_stream` does.
+
+        Returns:
+            A 2-tuple of the array and the number of bytes read.
+        """
+        if self._iostream is None:
+            raise RuntimeError("Cannot read data because no iostream is set")
+        array = np.empty(shape, dtype=dtype)
+        readinto = getattr(self._iostream, "readinto", None)
+        if readinto is None:
+            # Stream without readinto: fall back to the bytearray route
+            data_arr, bytes_read = self._read_bytearray_from_stream(array.nbytes)
+            return np.frombuffer(data_arr, dtype=dtype).reshape(shape), bytes_read
+        bytes_read = readinto(array.reshape(-1).view(np.uint8))
+        return array, bytes_read
 
     def _read_bytearray_from_stream(
         self, number_of_bytes: int
