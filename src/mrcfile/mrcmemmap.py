@@ -15,9 +15,9 @@ Classes:
 from __future__ import annotations
 
 import mmap
-from contextlib import suppress
 import os
 import warnings
+from contextlib import suppress
 
 import numpy as np
 
@@ -180,7 +180,7 @@ class MrcMemmap(MrcFile):
             with suppress(Exception):
                 # np.memmap's private _mmap is absent from NumPy's stubs, and
                 # MADV_SEQUENTIAL from the Windows stdlib stubs
-                self._data._mmap.madvise(mmap.MADV_SEQUENTIAL)  # type: ignore[attr-defined, union-attr]
+                self._data._mmap.madvise(mmap.MADV_SEQUENTIAL)  # type: ignore[attr-defined, union-attr]  # noqa: SLF001
 
         # Check if the file is the expected size.
         if self.data is not None:

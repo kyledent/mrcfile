@@ -2,6 +2,7 @@
 
 Usage:  python benchmarks/make_fixtures.py
 """
+
 import gzip
 import os
 import shutil
@@ -13,18 +14,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FIXDIR = os.path.join(ROOT, ".fixtures")
 
-# (name, shape, dtype)
+# Each fixture: file name, array shape and dtype
 SPECS = [
-    ("vol_f32.mrc", (128, 512, 512), "<f4"),   # 128 MiB  float32 volume
-    ("vol_i16.mrc", (128, 512, 512), "<i2"),   #  64 MiB  int16 volume
-    ("gz_src.mrc", (64, 512, 512), "<f4"),     #  64 MiB  source for the .gz
+    ("vol_f32.mrc", (128, 512, 512), "<f4"),  # 128 MiB  float32 volume
+    ("vol_i16.mrc", (128, 512, 512), "<i2"),  #  64 MiB  int16 volume
+    ("gz_src.mrc", (64, 512, 512), "<f4"),  #  64 MiB  source for the .gz
 ]
 
 
 def build() -> None:
     os.makedirs(FIXDIR, exist_ok=True)
+    # Import only once baseline/ is on sys.path, so that the fixtures are written
+    # by the unmodified package
     sys.path.insert(0, os.path.join(ROOT, "baseline"))
-    import mrcfile
+    import mrcfile  # noqa: PLC0415
 
     rng = np.random.default_rng(20260911)
     for name, shape, dtype in SPECS:
@@ -43,8 +46,10 @@ def build() -> None:
 
     gz = os.path.join(FIXDIR, "gz_src.mrc.gz")
     if not os.path.exists(gz):
-        with open(os.path.join(FIXDIR, "gz_src.mrc"), "rb") as fi, \
-                gzip.open(gz, "wb", compresslevel=1) as fo:
+        with (
+            open(os.path.join(FIXDIR, "gz_src.mrc"), "rb") as fi,
+            gzip.open(gz, "wb", compresslevel=1) as fo,
+        ):
             shutil.copyfileobj(fi, fo, length=1 << 24)
         print(f"  built   gz_src.mrc.gz  ({os.path.getsize(gz) / 2**20:.0f} MiB)")
 

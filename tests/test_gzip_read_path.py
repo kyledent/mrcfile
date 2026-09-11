@@ -75,8 +75,7 @@ def test_multi_member_gzip_is_read_correctly(tmp_path, volume):
 
     path = tmp_path / "multi.mrc.gz"
     with open(path, "wb") as out:
-        for part in (raw[:half], raw[half:]):
-            out.write(gzip.compress(part))
+        out.writelines(gzip.compress(part) for part in (raw[:half], raw[half:]))
 
     with mrcfile.open(str(path)) as mrc:
         np.testing.assert_array_equal(mrc.data, volume)
@@ -98,8 +97,7 @@ def test_multi_member_trailer_is_rejected(tmp_path, volume):
 
     path = tmp_path / "multi.mrc.gz"
     with open(path, "wb") as out:
-        for part in (raw[:half], raw[half:]):
-            out.write(gzip.compress(part))
+        out.writelines(gzip.compress(part) for part in (raw[:half], raw[half:]))
 
     with mrcfile.open(str(path)) as mrc:
         # Last member's ISIZE is below the total compressed length, so the

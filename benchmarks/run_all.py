@@ -6,6 +6,8 @@ variant, so the two copies of the package can never interfere.
 Usage:  python benchmarks/run_all.py [--tag LABEL]
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -33,9 +35,14 @@ def run_one(bench: str, variant: str) -> dict | None:
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([os.path.join(ROOT, variant), HERE])
     env["MRC_VARIANT"] = variant
-    proc = subprocess.run(
+    # Runs one of this directory's own benchmark scripts, never external input
+    proc = subprocess.run(  # noqa: S603
         [sys.executable, os.path.join(HERE, bench)],
-        env=env, capture_output=True, text=True, timeout=1800,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        check=False,
     )
     if proc.returncode != 0:
         print(f"  !! {bench} [{variant}] failed:\n{proc.stderr[-800:]}")
@@ -113,8 +120,10 @@ def render(payload: dict) -> str:
             b = base[op]
             k = fork.get(op)
             if k is None:
-                lines.append(f"| `{op}` | {b['ms']:.1f} ms | - | - | "
-                             f"{b['peak_mib']:.1f} MiB | - |")
+                lines.append(
+                    f"| `{op}` | {b['ms']:.1f} ms | - | - | "
+                    f"{b['peak_mib']:.1f} MiB | - |"
+                )
                 continue
             speed = b["ms"] / k["ms"] if k["ms"] else float("nan")
             flag = " **" if speed >= 1.15 else ""

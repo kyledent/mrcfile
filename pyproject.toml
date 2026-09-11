@@ -144,6 +144,13 @@ unfixable = []
     "T20",  # flake8-print
 ]
 
+# Benchmarks are command-line scripts that time the package's internals
+"benchmarks/**.py" = [
+    "D",  # docstrings
+    "SLF001",  # private member access
+    "T20",  # flake8-print
+]
+
 # Ignore some rules that are not relevant to docs config file
 "docs/conf.py" = [
     "D"  # docstrings

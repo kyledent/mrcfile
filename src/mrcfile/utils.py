@@ -287,7 +287,7 @@ WRITE_CHUNK_BYTES = 1 << 24  # 16 MiB
 
 
 def write_array_in_chunks(
-    stream: "BinaryIO", array: np.ndarray, chunk_bytes: int = WRITE_CHUNK_BYTES
+    stream: BinaryIO, array: np.ndarray, chunk_bytes: int = WRITE_CHUNK_BYTES
 ) -> None:
     """Write an array to a stream without duplicating it in memory.
 
@@ -306,8 +306,10 @@ def write_array_in_chunks(
     contiguous = np.ascontiguousarray(array)
     # NumPy's stubs before 2.1 do not type ndarray as a buffer for Python 3.9
     view = memoryview(contiguous.reshape(-1).view(np.uint8))  # type: ignore[arg-type]
-    for start in range(0, view.nbytes, chunk_bytes):
-        stream.write(view[start : start + chunk_bytes])
+    stream.writelines(
+        view[start : start + chunk_bytes]
+        for start in range(0, view.nbytes, chunk_bytes)
+    )
 
 
 #: Elements per block in :func:`calculate_stats`. 65536 float32 values is
@@ -371,10 +373,8 @@ def calculate_stats(
         elif min_ is None:
             min_, max_ = chunk_min, chunk_max
         else:
-            if chunk_min < min_:
-                min_ = chunk_min
-            if chunk_max > max_:
-                max_ = chunk_max
+            min_ = min(min_, chunk_min)
+            max_ = max(max_, chunk_max)
 
         # Cache-resident widening: the copy never leaves L2
         deviations = chunk.astype(np.float64) - shift

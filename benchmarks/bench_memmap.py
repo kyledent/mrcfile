@@ -1,6 +1,9 @@
 """The out-of-core path: mmap open plus a statistics sweep."""
+
 import _harness as h
+
 import mrcfile
+
 
 def main():
     path = h.fixture("vol_f32.mrc")
@@ -15,10 +18,14 @@ def main():
     def mmap_stats():
         mrc.update_header_stats()
 
-    h.emit("memmap", {
-        "mmap_open": h.measure(mmap_open, repeats=10),
-        "mmap_update_stats_128MiB": h.measure(mmap_stats),
-    })
+    h.emit(
+        "memmap",
+        {
+            "mmap_open": h.measure(mmap_open, repeats=10),
+            "mmap_update_stats_128MiB": h.measure(mmap_stats),
+        },
+    )
     mrc.close()
+
 
 main()

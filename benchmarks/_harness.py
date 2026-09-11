@@ -4,12 +4,15 @@ Each bench_*.py is run as a subprocess with PYTHONPATH pointing at either
 baseline/ or fork/, and prints a single JSON object on stdout. This keeps the
 two versions of the package completely isolated from each other.
 """
+
 import gc
 import json
 import os
 import sys
 import time
 import tracemalloc
+
+import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,5 +56,4 @@ def emit(name: str, results: dict) -> None:
 
 
 def report_env() -> dict:
-    import numpy as np
     return {"python": sys.version.split()[0], "numpy": np.__version__}

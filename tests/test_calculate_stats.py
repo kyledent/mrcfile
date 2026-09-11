@@ -8,6 +8,7 @@ boundaries, non-contiguous views and both byte orders.
 """
 
 import math
+from decimal import Decimal, getcontext
 
 import numpy as np
 import pytest
@@ -50,13 +51,23 @@ def test_matches_numpy_for_every_mrc_dtype(dtype):
         info = np.iinfo(np_dtype)
         arr = rng.integers(info.min // 2, info.max // 2, 100_003).astype(dtype)
     # float16 has ~3 decimal digits, so loosen the tolerance for it alone
-    assert_matches(arr, rtol=1e-3 if np_dtype.itemsize == 2 and np_dtype.kind == "f" else 1e-9)
+    assert_matches(
+        arr, rtol=1e-3 if np_dtype.itemsize == 2 and np_dtype.kind == "f" else 1e-9
+    )
 
 
 @pytest.mark.parametrize(
     "size",
-    [1, 2, 1000, STATS_BLOCK_SIZE - 1, STATS_BLOCK_SIZE, STATS_BLOCK_SIZE + 1,
-     2 * STATS_BLOCK_SIZE, 2 * STATS_BLOCK_SIZE + 7],
+    [
+        1,
+        2,
+        1000,
+        STATS_BLOCK_SIZE - 1,
+        STATS_BLOCK_SIZE,
+        STATS_BLOCK_SIZE + 1,
+        2 * STATS_BLOCK_SIZE,
+        2 * STATS_BLOCK_SIZE + 7,
+    ],
 )
 def test_block_boundaries(size):
     """Sizes either side of the block stride must not drop or double-count."""
@@ -133,8 +144,6 @@ def test_block_size_does_not_change_the_answer():
 
 def test_is_at_least_as_accurate_as_float32_accumulation():
     """The reason for FORK DEVIATION D1, asserted rather than claimed."""
-    from decimal import Decimal, getcontext
-
     getcontext().prec = 60
     img = np.linspace(-32768, 32767, 90, dtype=np.int16).reshape(9, 10)
     vol = img // np.arange(1, 6, dtype=np.int16).reshape(5, 1, 1)

@@ -976,11 +976,10 @@ class MrcObject:
             stats = utils.calculate_stats(self.data)
 
         if self.header.rms >= 0:
-            if stats is not None:
+            if stats is not None and self.data is not None:
                 # numpy's std() returns the input dtype for floating-point
                 # arrays and float64 otherwise. Match it so that the message
                 # below formats exactly as it always has.
-                assert self.data is not None
                 rms_dtype = (
                     self.data.dtype
                     if self.data.dtype.kind == "f"

@@ -1,7 +1,11 @@
 """validate() on an already-open file, isolating it from read cost."""
-import _harness as h
-import mrcfile
+
 import io
+
+import _harness as h
+
+import mrcfile
+
 
 def main():
     path = h.fixture("vol_f32.mrc")
@@ -15,5 +19,6 @@ def main():
 
     h.emit("validate", {"validate_128MiB": h.measure(validate)})
     mrc.close()
+
 
 main()
