@@ -1,4 +1,5 @@
-# Copyright (c) 2026, the mrcfile contributors
+# Copyright (c) 2016, Science and Technology Facilities Council
+# Copyright (c) 2026, Diamond Light Source
 # This software is distributed under a BSD licence. See LICENSE.txt.
 """
 zstdmrcfile
