@@ -955,7 +955,9 @@ class MrcObject:
             valid = False
 
         # Check data statistics
-        real_rms = real_min = real_max = real_mean = 0
+        real_rms: float | np.generic = 0
+        real_min = real_max = 0
+        real_mean: float | np.generic = 0
 
         # Compute all four statistics in one blocked pass, but only if at least
         # one of the checks below will actually look at them. Complex data is

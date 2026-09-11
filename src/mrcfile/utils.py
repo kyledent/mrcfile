@@ -36,7 +36,7 @@ from __future__ import annotations
 import math
 import string
 import sys
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 import numpy as np
 
@@ -304,7 +304,8 @@ def write_array_in_chunks(
         chunk_bytes: Maximum bytes per write call.
     """
     contiguous = np.ascontiguousarray(array)
-    view = memoryview(contiguous.reshape(-1).view(np.uint8))
+    # NumPy's stubs before 2.1 do not type ndarray as a buffer for Python 3.9
+    view = memoryview(contiguous.reshape(-1).view(np.uint8))  # type: ignore[arg-type]
     for start in range(0, view.nbytes, chunk_bytes):
         stream.write(view[start : start + chunk_bytes])
 
@@ -317,7 +318,7 @@ STATS_BLOCK_SIZE = 65536
 
 def calculate_stats(
     data: np.ndarray, block_size: int = STATS_BLOCK_SIZE
-) -> tuple[np.generic, np.generic, float, float]:
+) -> tuple[Any, Any, float, float]:
     """Calculate min, max, mean and RMS deviation in a single pass.
 
     This is equivalent to calling :meth:`~numpy.ndarray.min`,
@@ -355,7 +356,8 @@ def calculate_stats(
     # Provisional mean from the first block, used as a shift for stability
     shift = float(np.mean(flat[: min(block_size, n)], dtype=np.float64))
 
-    min_ = max_ = None
+    min_: Any = None
+    max_: Any = None
     nan_seen = False
     total = 0.0
     total_sq = 0.0

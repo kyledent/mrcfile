@@ -62,6 +62,12 @@ python_version = "3.9"
 module = "mrcfile.*"
 disallow_untyped_defs = true
 
+# The tests import pytest, and recent pytest releases use syntax newer than the
+# python_version target above. Treat pytest as untyped instead of analysing it.
+[[tool.mypy.overrides]]
+module = ["pytest", "_pytest.*"]
+follow_imports = "skip"
+
 
 [tool.ruff]
 # Same as Black.

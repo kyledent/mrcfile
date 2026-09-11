@@ -178,7 +178,9 @@ class MrcMemmap(MrcFile):
         # failure here is ignored.
         if self._data is not None:
             with suppress(Exception):
-                self._data._mmap.madvise(mmap.MADV_SEQUENTIAL)
+                # np.memmap's private _mmap is absent from NumPy's stubs, and
+                # MADV_SEQUENTIAL from the Windows stdlib stubs
+                self._data._mmap.madvise(mmap.MADV_SEQUENTIAL)  # type: ignore[attr-defined, union-attr]
 
         # Check if the file is the expected size.
         if self.data is not None:
