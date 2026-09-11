@@ -13,8 +13,10 @@ Classes:
 
 from __future__ import annotations
 
+import builtins
 import gzip
 import os
+import warnings
 from typing import BinaryIO, cast
 
 from .mrcfile import MrcFile
@@ -62,7 +64,13 @@ class GzipMrcFile(MrcFile):
             )  # cast needed because of awkward IO types
 
     def _get_file_size(self) -> int:
-        """Override _get_file_size() to avoid seeking from end."""
+        """Override _get_file_size() to avoid seeking from end.
+
+        Kept for API compatibility. This is the expensive measurement: it
+        decompresses everything that is left and then seeks backwards, which
+        makes :class:`~gzip.GzipFile` decompress the whole stream again from
+        the start. :meth:`_read_data` avoids calling it.
+        """
         if self._iostream is None:
             raise RuntimeError("Cannot get file size because no file is set")
         self._ensure_readable_gzip_stream()
@@ -70,6 +78,73 @@ class GzipMrcFile(MrcFile):
         extra = len(self._iostream.read())
         self._iostream.seek(pos, os.SEEK_SET)
         return pos + extra
+
+    def _uncompressed_size_from_trailer(self) -> int | None:
+        """Return the uncompressed length from the gzip ISIZE trailer.
+
+        The last four bytes of a gzip member hold the uncompressed size modulo
+        2**32. Reading them costs two syscalls on a separate file handle, so
+        the live :class:`~gzip.GzipFile` is never disturbed.
+
+        ISIZE is unreliable in two cases: the counter wraps for streams of 4 GiB
+        or more, and for a multi-member file it describes only the last member.
+        Both make it an under-estimate, and DEFLATE cannot shrink data, so an
+        ISIZE below the compressed length proves the value is untrustworthy.
+        :data:`None` is returned in that case, and the caller falls back to
+        reading without a cap.
+        """
+        name = getattr(self._fileobj, "name", None)
+        if not isinstance(name, str):
+            return None
+        try:
+            with builtins.open(name, "rb") as raw:
+                compressed = raw.seek(0, os.SEEK_END)
+                if compressed < 18:  # smaller than an empty gzip member
+                    return None
+                raw.seek(-4, os.SEEK_END)
+                isize = int.from_bytes(raw.read(4), "little")
+        except OSError:
+            return None
+        return isize if isize >= compressed else None
+
+    def _read_data(self) -> None:
+        """Read the data block using a single forward decompression pass.
+
+        The inherited implementation calls :meth:`_get_file_size` first, purely
+        to work out a sanity limit and to spot trailing bytes. For a compressed
+        stream that measurement costs two extra full decompressions. Here the
+        limit comes from the ISIZE trailer instead, and trailing bytes are
+        counted by continuing forwards after the data block rather than by
+        rewinding.
+        """
+        if self.header is None:
+            raise RuntimeError(
+                "Cannot read data from an uninitialised or closed MRC object"
+            )
+        header_size = self.header.nbytes + int(self.header.nsymbt)
+        total = self._uncompressed_size_from_trailer()
+        # max_bytes of 0 means "no limit" to _read_data_from_stream
+        max_bytes = total - header_size if total is not None else 0
+
+        super(MrcFile, self)._read_data_from_stream(max_bytes=max_bytes)
+
+        if self.data is not None:
+            extra = self._count_remaining_bytes()
+            if extra > 0:
+                warnings.warn(
+                    f"MRC file is {extra} bytes larger than expected", RuntimeWarning
+                )
+
+    def _count_remaining_bytes(self) -> int:
+        """Count whatever is left in the stream, reading forwards only."""
+        if self._iostream is None:
+            return 0
+        total = 0
+        while True:
+            chunk = self._iostream.read(1 << 20)
+            if not chunk:
+                return total
+            total += len(chunk)
 
     def flush(self) -> None:
         """Override :meth:`~mrcfile.mrcinterpreter.MrcInterpreter.flush` since
