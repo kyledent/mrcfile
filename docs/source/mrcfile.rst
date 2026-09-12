@@ -16,6 +16,16 @@ mrcfile -- Main package
 Submodules
 ----------
 
+mrcfile.bgzfmrcfile module
+--------------------------
+
+.. automodule:: mrcfile.bgzfmrcfile
+    :special-members: __init__
+    :members:
+    :undoc-members:
+    :private-members:
+    :show-inheritance:
+
 mrcfile.bzip2mrcfile module
 ---------------------------
 

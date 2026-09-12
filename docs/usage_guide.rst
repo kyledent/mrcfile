@@ -132,6 +132,27 @@ Zstandard-compressed files (``.mrc.zst``) are supported too, through
 3.14 or later, or the ``backports.zstd`` package on earlier versions (``pip
 install mrcfile[zstd]``). It is typically much faster than gzip.
 
+Gzip can also be written as BGZF, the blocked form of gzip that BAM files use,
+by passing ``compression='bgzf'``. The file is then a series of independent
+blocks of at most 64 KiB, each recording its own compressed size, so the blocks
+can be decompressed in parallel. Any other gzip reader still sees an ordinary
+gzip file, and :func:`mrcfile.open` recognises BGZF, so that writing the file
+back keeps the blocks:
+
+.. doctest::
+
+   >>> with mrcfile.new('tmp4.mrc.gz', compression='bgzf') as mrc:
+   ...     mrc.set_data(example_data * 5)
+   ...
+   >>> with mrcfile.open('tmp4.mrc.gz') as mrc:
+   ...     print(mrc)
+   ...     mrc.data
+   ...
+   BgzfMrcFile('tmp4.mrc.gz', mode='r')
+   array([[ 0,  5, 10, 15],
+          [20, 25, 30, 35],
+          [40, 45, 50, 55]], dtype=int8)
+
 Closing files and writing to disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

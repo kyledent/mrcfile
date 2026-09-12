@@ -19,6 +19,7 @@ from typing import Literal
 import numpy as np
 
 from . import utils
+from .bgzfmrcfile import BgzfMrcFile, is_bgzf
 from .bzip2mrcfile import Bzip2MrcFile
 from .constants import MAP_ID, MAP_ID_OFFSET_BYTES
 from .future_mrcfile import FutureMrcFile
@@ -45,17 +46,20 @@ def new(
             file.
         compression: The compression format to use. Acceptable values are:
             :data:`None` (the default; for no compression), ``'gzip'``,
-            ``'bzip2'`` or ``'zstd'``. Zstandard needs Python 3.14 or later, or
-            the ``backports.zstd`` package.
+            ``'bgzf'``, ``'bzip2'`` or ``'zstd'``. ``'bgzf'`` writes gzip as a
+            series of independent 64 KiB blocks (see :mod:`~mrcfile.bgzfmrcfile`):
+            any gzip reader can read the file, and the blocks can be decompressed
+            in parallel. Zstandard needs Python 3.14 or later, or the
+            ``backports.zstd`` package.
             It's good practice to name compressed files with an appropriate
             extension (for example, ``.mrc.gz`` for gzip) but this is not
             enforced.
         compresslevel: The compression level to use when ``compression`` is
-            set: 0 to 9 for gzip, 1 to 9 for bzip2, or up to 22 for Zstandard,
-            whose negative levels are faster still. The default is
-            :data:`None`, which uses level 9 for gzip and bzip2 and Zstandard's
-            own default level for zstd. Lower levels write faster but may
-            compress less.
+            set: 0 to 9 for gzip and BGZF, 1 to 9 for bzip2, or up to 22 for
+            Zstandard, whose negative levels are faster still. The default is
+            :data:`None`, which uses level 9 for gzip, BGZF and bzip2 and
+            Zstandard's own default level for zstd. Lower levels write faster
+            but may compress less.
         overwrite: Flag to force overwriting of an existing file. If
             :data:`False` and a file of the same name already exists, the file
             is not overwritten and an exception is raised.
@@ -79,6 +83,10 @@ def new(
     mrc: MrcFile
     if compression == "gzip":
         mrc = GzipMrcFile(
+            name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
+        )
+    elif compression == "bgzf":
+        mrc = BgzfMrcFile(
             name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
         )
     elif compression == "bzip2":
@@ -111,7 +119,9 @@ def open(  # noqa: A001
 
     This function opens both normal and compressed MRC files. Supported
     compression formats are: gzip, bzip2 and Zstandard. Zstandard needs Python
-    3.14 or later, or the ``backports.zstd`` package.
+    3.14 or later, or the ``backports.zstd`` package. A BGZF file (gzip written
+    in independent blocks) opens as a :class:`~mrcfile.bgzfmrcfile.BgzfMrcFile`,
+    so that writing it back keeps the blocks.
 
     It is possible to use this function to create new MRC files (using mode
     ``w+``) but the :func:`new` function is more flexible.
@@ -177,7 +187,7 @@ def open(  # noqa: A001
         # class can always be used directly instead.)
         if start[-len(MAP_ID) :] != MAP_ID:
             if start[:2] == b"\x1f\x8b":
-                NewMrc = GzipMrcFile  # noqa: N806
+                NewMrc = BgzfMrcFile if is_bgzf(start) else GzipMrcFile  # noqa: N806
             elif start[:2] == b"BZ":
                 NewMrc = Bzip2MrcFile  # noqa: N806
             elif start[:4] == b"\x28\xb5\x2f\xfd":
