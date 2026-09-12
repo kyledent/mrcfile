@@ -15,6 +15,9 @@ name = "mrcfile"
 authors = [
     {name = "Colin Palmer", email = "colin.palmer@stfc.ac.uk"},
 ]
+maintainers = [
+    {name = "Kyle Dent", email = "kyle.dent@gmail.com"},
+]
 dynamic = ["version", "readme"]
 description = "MRC file I/O library"
 license = "BSD-3-Clause"
