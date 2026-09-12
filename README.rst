@@ -50,8 +50,7 @@ Key Features
 * Seamless support for gzip, bzip2 and Zstandard files (Zstandard needs Python 3.14
   or the ``backports.zstd`` package)
 * Optional BGZF output: gzip written as independent blocks, which any gzip reader
-  reads, which can be compressed on several threads, and which can be decompressed
-  in parallel
+  reads, and which mrcfile can compress and decompress on several threads
 * Memory-mapped file option for fast random access to very large files
 * Asynchronous opening option for background loading of multiple files
 * Runs in Python 3, on Linux, Mac OS X and Windows

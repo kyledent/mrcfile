@@ -28,6 +28,7 @@ from __future__ import annotations
 import gzip
 import os
 import struct
+import warnings
 import zlib
 from collections import deque
 from collections.abc import Iterable, Iterator
@@ -161,15 +162,87 @@ def _compress_blocks(
             yield pending.popleft().result()
 
 
+def _inflate_into(
+    body: bytes, crc: int, isize: int, target: np.ndarray, skip: int
+) -> None:
+    """Decompress the body of one block and copy part of it into ``target``.
+
+    ``body`` is the block after its header: the DEFLATE data, then the CRC32 and
+    length of the uncompressed data. The decompressed bytes from offset ``skip``
+    onwards fill ``target``.
+
+    Raises:
+        :exc:`gzip.BadGzipFile`: If the CRC or the length does not match.
+    """
+    data = zlib.decompress(memoryview(body)[: -_TRAILER.size], -zlib.MAX_WBITS)
+    if len(data) != isize:
+        raise gzip.BadGzipFile("Incorrect length of data produced")
+    if zlib.crc32(data) != crc:
+        raise gzip.BadGzipFile("CRC check failed")
+    target[:] = np.frombuffer(data, dtype=np.uint8, count=len(target), offset=skip)
+
+
+def _read_blocks_into(
+    path: str, start: int, out: np.ndarray, threads: int
+) -> tuple[int, int] | None:
+    """Decompress a BGZF file, from uncompressed offset ``start``, into ``out``.
+
+    The blocks are read in order and decompressed on ``threads`` threads, each
+    straight into its place in ``out``, a flat array of bytes. At most four
+    blocks per thread are in flight at once.
+
+    Returns:
+        ``(filled, total)``: how many bytes of ``out`` were filled, which is
+        fewer if the file is too short, and the file's total uncompressed
+        length. :data:`None` if the file is not a clean run of BGZF blocks, so
+        that the caller can read it some other way.
+
+    Raises:
+        :exc:`gzip.BadGzipFile`: If a block's CRC or length does not match its
+            trailer.
+        :exc:`zlib.error`: If a block's compressed data is corrupt.
+    """
+    stop = start + len(out)
+    total = 0
+    with open(path, "rb") as f, ThreadPoolExecutor(max_workers=threads) as pool:
+        end = f.seek(0, os.SEEK_END)
+        f.seek(0)
+        pending: deque[Future[None]] = deque()
+        offset = 0
+        while offset < end:
+            header = f.read(_HEADER.size)
+            if not is_bgzf(header):
+                return None
+            size = int(_HEADER.unpack(header)[-1]) + 1
+            if size < _HEADER.size + _TRAILER.size or offset + size > end:
+                return None
+            body = f.read(size - _HEADER.size)
+            crc, isize = _TRAILER.unpack(body[-_TRAILER.size :])
+            low, high = max(total, start), min(total + isize, stop)
+            if low < high:
+                target = out[low - start : high - start]
+                pending.append(
+                    pool.submit(_inflate_into, body, crc, isize, target, low - total)
+                )
+                if len(pending) >= 4 * threads:
+                    pending.popleft().result()
+            offset += size
+            total += isize
+        for future in pending:
+            future.result()
+    return max(0, min(stop, total) - start), total
+
+
 class BgzfMrcFile(GzipMrcFile):
     """:class:`~mrcfile.gzipmrcfile.GzipMrcFile` subclass for BGZF files.
 
-    Reading is inherited unchanged, because a BGZF file is also a valid gzip
-    file. Writing splits the file into blocks of :data:`BLOCK_DATA_SIZE` bytes,
+    Writing splits the file into blocks of :data:`BLOCK_DATA_SIZE` bytes,
     compresses each one independently, and ends the file with
-    :data:`EOF_BLOCK`. ``compresslevel`` works as it does for
-    :class:`~mrcfile.gzipmrcfile.GzipMrcFile`, with the same default of 9, and
-    ``threads`` sets how many threads compress the blocks.
+    :data:`EOF_BLOCK`. Reading works as for any gzip file, since a BGZF file is
+    also a valid gzip file. ``compresslevel`` works as it does for
+    :class:`~mrcfile.gzipmrcfile.GzipMrcFile`, with the same default of 9.
+    ``threads`` sets how many threads compress the blocks when the file is
+    written, and decompress them when the data is read.
 
     """
 
@@ -188,8 +261,9 @@ class BgzfMrcFile(GzipMrcFile):
 
         Takes the same arguments as :class:`~mrcfile.gzipmrcfile.GzipMrcFile`,
         plus ``threads``: the number of threads that compress the blocks when
-        the file is written. The default, :data:`None`, uses one. The file is
-        the same whatever the number of threads.
+        the file is written, and decompress them when the data is read. The
+        default, :data:`None`, uses one. The file, and the data read from it,
+        are the same whatever the number of threads.
 
         Raises:
             :exc:`ValueError`: If ``threads`` is less than 1, or
@@ -200,6 +274,8 @@ class BgzfMrcFile(GzipMrcFile):
         if threads is not None and threads < 1:
             raise ValueError(f"threads must be at least 1, not {threads}")
         self._threads = 1 if threads is None else threads
+        # Set by a parallel read: the bytes after the data block, None if unknown
+        self._trailing_bytes: int | None = None
         super().__init__(
             name,
             mode,
@@ -212,6 +288,49 @@ class BgzfMrcFile(GzipMrcFile):
     def __repr__(self) -> str:
         """Return a string representation of the BgzfMrcFile object."""
         return f"BgzfMrcFile('{self._fileobj.name}', mode='{self._mode}')"
+
+    def _read_data(self) -> None:
+        """Read the data block, decompressing its blocks on several threads.
+
+        With one thread this is the single forward pass of
+        :class:`~mrcfile.gzipmrcfile.GzipMrcFile`. With more, the blocks that
+        hold the data block are read in order from a separate file handle and
+        decompressed in parallel, straight into the new array, and each block's
+        CRC and length are checked against its trailer. The checks on the
+        result, and the errors and warnings for a data block that is too short
+        or too long, are the same as with one thread. A file that is not a
+        clean run of BGZF blocks is read on one thread.
+        """
+        if self._threads == 1:
+            super()._read_data()
+            return
+        self._trailing_bytes = None
+        self._read_data_from_stream(max_bytes=0)
+        if self.data is not None:
+            extra = self._trailing_bytes
+            if extra is None:  # the file was read on one thread after all
+                extra = self._count_remaining_bytes()
+            if extra > 0:
+                warnings.warn(
+                    f"MRC file is {extra} bytes larger than expected", RuntimeWarning
+                )
+
+    def _read_array_from_stream(
+        self, shape: tuple, dtype: np.dtype
+    ) -> tuple[np.ndarray, int]:
+        """Read the data array, decompressing the blocks in parallel if asked to."""
+        name = getattr(self._fileobj, "name", None)
+        if self._threads == 1 or self._iostream is None or not isinstance(name, str):
+            return super()._read_array_from_stream(shape, dtype)
+        array = np.empty(shape, dtype=dtype)
+        start = self._iostream.tell()
+        flat = array.reshape(-1).view(np.uint8)
+        result = _read_blocks_into(name, start, flat, self._threads)
+        if result is None:  # not a clean run of BGZF blocks
+            return super()._read_array_from_stream(shape, dtype)
+        filled, total = result
+        self._trailing_bytes = max(0, total - start - array.nbytes)
+        return array, filled
 
     def flush(self) -> None:
         """Write the file as BGZF blocks, rather than as one gzip stream.

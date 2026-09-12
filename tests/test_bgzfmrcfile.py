@@ -242,3 +242,124 @@ def test_threads_need_bgzf(tmp_path, compression):
     with pytest.raises(ValueError, match="threads can only be used"):
         mrcfile.new(path, compression=compression, threads=2)
     assert not path.exists()
+
+
+@pytest.fixture
+def big_volume():
+    """Forty-one blocks of noise: more than four threads keep in flight at once."""
+    return np.random.default_rng(2).standard_normal((40, 128, 128)).astype(np.float32)
+
+
+def bgzf_of(raw, path):
+    """Write arbitrary bytes as BGZF, as a malformed MRC file needs."""
+    blocks = bgzfmrcfile._compress_blocks(
+        bgzfmrcfile._block_data(raw, memoryview(b"")), 6, 1
+    )
+    path.write_bytes(b"".join(blocks) + EOF_BLOCK)
+    return path
+
+
+def plain_file_bytes(tmp_path, data):
+    with mrcfile.new(tmp_path / "plain.mrc", data, overwrite=True) as mrc:
+        return file_bytes(mrc)
+
+
+@pytest.mark.parametrize("threads", [2, 4, 8])
+def test_threaded_read_gives_the_same_data(tmp_path, big_volume, threads):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", big_volume)
+    with mrcfile.open(path) as one, mrcfile.open(path, threads=threads) as many:
+        assert type(many) is BgzfMrcFile
+        assert many.header.tobytes() == one.header.tobytes()
+        np.testing.assert_array_equal(many.data, big_volume)
+        assert not many.data.flags.writeable
+
+
+def test_threaded_read_after_a_long_extended_header(tmp_path, volume):
+    extended = np.frombuffer(bytes(range(256)) * 400, dtype="V1")
+    path = tmp_path / "ext.mrc.gz"
+    with mrcfile.new(path, volume, compression="bgzf") as mrc:
+        mrc.set_extended_header(extended)
+    with mrcfile.open(path, threads=4) as mrc:
+        assert mrc.extended_header.tobytes() == extended.tobytes()
+        np.testing.assert_array_equal(mrc.data, volume)
+
+
+def test_threaded_read_uses_a_pool_of_that_size(tmp_path, volume, monkeypatch):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+    sizes = []
+    real_pool = bgzfmrcfile.ThreadPoolExecutor
+
+    def spy(max_workers):
+        sizes.append(max_workers)
+        return real_pool(max_workers=max_workers)
+
+    monkeypatch.setattr(bgzfmrcfile, "ThreadPoolExecutor", spy)
+    mrcfile.open(path).close()
+    mrcfile.open(path, threads=3).close()
+    assert sizes == [3]
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_threaded_read_reports_trailing_bytes(tmp_path, volume, threads):
+    path = bgzf_of(plain_file_bytes(tmp_path, volume) + b"extra", tmp_path / "x.mrc.gz")
+    with pytest.warns(RuntimeWarning, match="5 bytes larger than expected"):
+        mrcfile.open(path, threads=threads).close()
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_threaded_read_of_a_short_file(tmp_path, volume, threads):
+    path = bgzf_of(plain_file_bytes(tmp_path, volume)[:-100], tmp_path / "x.mrc.gz")
+    expected = f"Expected {volume.nbytes} bytes in data block but could only read"
+    with pytest.raises(ValueError, match=expected):
+        mrcfile.open(path, threads=threads)
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_threaded_read_detects_a_bad_crc(tmp_path, volume, threads):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+    raw = bytearray(path.read_bytes())
+    offset, size = blocks_of(path)[2]
+    raw[offset + size - 8] ^= 0xFF  # the first byte of the block's CRC32
+    path.write_bytes(bytes(raw))
+    with pytest.raises(gzip.BadGzipFile):
+        mrcfile.open(path, threads=threads)
+
+
+def test_threaded_read_of_plain_multi_member_gzip(tmp_path, volume):
+    """A gzip file that is not BGZF is read on one thread."""
+    raw = plain_file_bytes(tmp_path, volume)
+    path = tmp_path / "multi.mrc.gz"
+    path.write_bytes(gzip.compress(raw[:5000]) + gzip.compress(raw[5000:]))
+    with BgzfMrcFile(path, threads=4) as mrc:
+        np.testing.assert_array_equal(mrc.data, volume)
+
+
+def test_open_ignores_threads_for_other_formats(tmp_path, volume):
+    plain = tmp_path / "v.mrc"
+    with mrcfile.new(plain, volume):
+        pass
+    gz = tmp_path / "v.mrc.gz"
+    with mrcfile.new(gz, volume, compression="gzip"):
+        pass
+    for path in (plain, gz):
+        with mrcfile.open(path, threads=4) as mrc:
+            np.testing.assert_array_equal(mrc.data, volume)
+
+
+def test_open_threads_must_be_positive(tmp_path, volume):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+    with pytest.raises(ValueError, match="threads must be at least 1"):
+        mrcfile.open(path, threads=0)
+
+
+def test_rewrite_on_several_threads(tmp_path, big_volume):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", big_volume)
+    with mrcfile.open(path, mode="r+", threads=4) as mrc:
+        mrc.set_data(big_volume * 2)
+    with mrcfile.open(path, threads=4) as mrc:
+        np.testing.assert_array_equal(mrc.data, big_volume * 2)
+
+
+def test_read_function_accepts_threads(tmp_path, big_volume):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", big_volume)
+    np.testing.assert_array_equal(mrcfile.read(path, threads=4), big_volume)

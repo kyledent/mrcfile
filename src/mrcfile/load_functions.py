@@ -127,6 +127,7 @@ def open(  # noqa: A001
     *,
     permissive: bool = False,
     header_only: bool = False,
+    threads: int | None = None,
 ) -> MrcFile:
     """Open an MRC file.
 
@@ -154,6 +155,9 @@ def open(  # noqa: A001
             :data:`False`.
         header_only: Only read the header (and extended header) from the file.
             The default is :data:`False`.
+        threads: The number of threads to decompress a BGZF file with, and to
+            compress it with if it is written back. Other formats ignore it.
+            The default is :data:`None`, which uses one thread.
 
     Returns:
         An :class:`~mrcfile.mrcfile.MrcFile` object (or a
@@ -171,6 +175,7 @@ def open(  # noqa: A001
             exist.
         :exc:`ImportError`: If the file is Zstandard-compressed and Zstandard
             support is not available.
+        :exc:`ValueError`: If ``threads`` is less than 1.
 
     Warns:
         RuntimeWarning: If the file appears to be a valid MRC file but the data
@@ -181,6 +186,8 @@ def open(  # noqa: A001
             value but the extended header's size is not a multiple of the
             number of bytes in the corresponding dtype.
     """
+    if threads is not None and threads < 1:
+        raise ValueError(f"threads must be at least 1, not {threads}")
     NewMrc = MrcFile  # noqa: N806
     name = str(name)  # in case name is a pathlib Path
     if os.path.exists(name):
@@ -205,10 +212,20 @@ def open(  # noqa: A001
                 NewMrc = Bzip2MrcFile  # noqa: N806
             elif start[:4] == b"\x28\xb5\x2f\xfd":
                 NewMrc = ZstdMrcFile  # noqa: N806
+    if NewMrc is BgzfMrcFile:
+        return BgzfMrcFile(
+            name,
+            mode=mode,
+            permissive=permissive,
+            header_only=header_only,
+            threads=threads,
+        )
     return NewMrc(name, mode=mode, permissive=permissive, header_only=header_only)
 
 
-def read(name: str | os.PathLike[str]) -> np.ndarray | None:
+def read(
+    name: str | os.PathLike[str], *, threads: int | None = None
+) -> np.ndarray | None:
     """Read an MRC file's data into a numpy array.
 
     This is a convenience function to read the data from an MRC file when there is no
@@ -218,12 +235,17 @@ def read(name: str | os.PathLike[str]) -> np.ndarray | None:
 
     Args:
         name: The file name to read, as a string or :class:`~pathlib.Path`.
+        threads: The number of threads to decompress a BGZF file with. Other formats
+            ignore it. The default is :data:`None`, which uses one thread.
 
     Returns:
         A :class:`numpy array<numpy.ndarray>` containing the data from the file, or
         :data:`None` if the data could not be read.
+
+    Raises:
+        :exc:`ValueError`: If ``threads`` is less than 1.
     """
-    with open(name, mode="r", permissive=True) as mrc:
+    with open(name, mode="r", permissive=True, threads=threads) as mrc:
         data = mrc.data.copy() if mrc.data is not None else None
     return data
 
