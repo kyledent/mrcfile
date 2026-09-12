@@ -196,3 +196,49 @@ def test_bgzf_blocks_detects_truncation(tmp_path, volume):
 def test_validate(tmp_path, volume):
     path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
     assert mrcfile.validate(str(path), print_file=io.StringIO())
+
+
+def write_with_threads(path, data, threads):
+    """Write with a fixed label, so that files written at different times match."""
+    with mrcfile.new(path, data, compression="bgzf", threads=threads) as mrc:
+        mrc.header.label[0] = b"fixed label"
+    return path.read_bytes()
+
+
+def test_threads_do_not_change_the_file(tmp_path):
+    # More blocks than four threads keep in flight at once
+    data = np.random.default_rng(1).standard_normal((40, 128, 128)).astype(np.float32)
+    one = write_with_threads(tmp_path / "one.mrc.gz", data, None)
+    four = write_with_threads(tmp_path / "four.mrc.gz", data, 4)
+    assert len(blocks_of(tmp_path / "four.mrc.gz")) > 4 * 4
+    assert one == four
+
+
+def test_threads_use_a_pool_of_that_size(tmp_path, volume, monkeypatch):
+    sizes = []
+    real_pool = bgzfmrcfile.ThreadPoolExecutor
+
+    def spy(max_workers):
+        sizes.append(max_workers)
+        return real_pool(max_workers=max_workers)
+
+    monkeypatch.setattr(bgzfmrcfile, "ThreadPoolExecutor", spy)
+    write_bgzf(tmp_path / "one.mrc.gz", volume)
+    write_bgzf(tmp_path / "three.mrc.gz", volume, threads=3)
+    assert sizes == [3]
+
+
+@pytest.mark.parametrize("threads", [0, -2])
+def test_threads_must_be_positive(tmp_path, threads):
+    path = tmp_path / "bad.mrc.gz"
+    with pytest.raises(ValueError, match="threads must be at least 1"):
+        mrcfile.new(path, compression="bgzf", threads=threads)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("compression", [None, "gzip", "bzip2", "zstd"])
+def test_threads_need_bgzf(tmp_path, compression):
+    path = tmp_path / "other.mrc"
+    with pytest.raises(ValueError, match="threads can only be used"):
+        mrcfile.new(path, compression=compression, threads=2)
+    assert not path.exists()

@@ -153,6 +153,20 @@ back keeps the blocks:
           [20, 25, 30, 35],
           [40, 45, 50, 55]], dtype=int8)
 
+Because the blocks are independent, they can also be compressed on several
+threads, which writes faster. The file is the same whatever the number of
+threads:
+
+.. doctest::
+
+   >>> with mrcfile.new('tmp5.mrc.gz', compression='bgzf', threads=4) as mrc:
+   ...     mrc.set_data(example_data)
+   ...
+   >>> mrcfile.read('tmp5.mrc.gz')
+   array([[ 0,  1,  2,  3],
+          [ 4,  5,  6,  7],
+          [ 8,  9, 10, 11]], dtype=int8)
+
 Closing files and writing to disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

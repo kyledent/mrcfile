@@ -29,13 +29,14 @@ from .mrcmemmap import MrcMemmap
 from .zstdmrcfile import ZstdMrcFile
 
 
-def new(
+def new(  # noqa: PLR0913
     name: str | os.PathLike[str],
     data: np.ndarray | None = None,
     *,
     compression: str | None = None,
     compresslevel: int | None = None,
     overwrite: bool = False,
+    threads: int | None = None,
 ) -> MrcFile:
     """Create a new MRC file.
 
@@ -63,6 +64,10 @@ def new(
         overwrite: Flag to force overwriting of an existing file. If
             :data:`False` and a file of the same name already exists, the file
             is not overwritten and an exception is raised.
+        threads: The number of threads to compress with, for
+            ``compression='bgzf'`` only. The default is :data:`None`, which uses
+            one thread. BGZF blocks are compressed independently, so more
+            threads write faster, and the file is the same whatever the number.
 
     Returns:
         An :class:`~mrcfile.mrcfile.MrcFile` object (or a
@@ -74,12 +79,16 @@ def new(
         :exc:`ValueError`: If the compression format is not recognised.
         :exc:`ValueError`: If ``compresslevel`` is given without
             ``compression``, or is out of range for the compression format.
+        :exc:`ValueError`: If ``threads`` is given for a format other than
+            BGZF, or is less than 1.
         :exc:`ImportError`: If ``compression`` is ``'zstd'`` and Zstandard
             support is not available.
 
     Warns:
         RuntimeWarning: If the data array contains Inf or NaN values.
     """
+    if threads is not None and compression != "bgzf":
+        raise ValueError("threads can only be used with compression='bgzf'")
     mrc: MrcFile
     if compression == "gzip":
         mrc = GzipMrcFile(
@@ -87,7 +96,11 @@ def new(
         )
     elif compression == "bgzf":
         mrc = BgzfMrcFile(
-            name, mode="w+", overwrite=overwrite, compresslevel=compresslevel
+            name,
+            mode="w+",
+            overwrite=overwrite,
+            compresslevel=compresslevel,
+            threads=threads,
         )
     elif compression == "bzip2":
         mrc = Bzip2MrcFile(

@@ -11,7 +11,8 @@ BGZF is gzip written as a series of independent blocks. Each block holds at most
 format comes from the SAM/BAM specification, where it gives BAM files random
 access. Any gzip reader decompresses a BGZF file as ordinary gzip. A reader that
 knows the format can also find every block without decompressing anything, and
-so decompress the blocks in parallel, on CPU threads or on a GPU.
+so decompress the blocks in parallel, on CPU threads or on a GPU. Because the
+blocks are independent, a writer can compress them in parallel too.
 
 Classes:
     :class:`BgzfMrcFile`: An object which represents a BGZF-compressed MRC file.
@@ -28,8 +29,10 @@ import gzip
 import os
 import struct
 import zlib
-from collections.abc import Iterator
-from typing import BinaryIO, cast
+from collections import deque
+from collections.abc import Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import BinaryIO, Literal, cast
 
 import numpy as np
 
@@ -134,6 +137,30 @@ def _compress_block(data: bytes | memoryview, level: int) -> bytes:
     return header + deflated + _TRAILER.pack(zlib.crc32(data), len(data))
 
 
+def _compress_blocks(
+    pieces: Iterable[bytes | memoryview], level: int, threads: int
+) -> Iterator[bytes]:
+    """Compress each piece as one BGZF block, and yield the blocks in order.
+
+    With more than one thread the pieces are compressed in parallel, because
+    zlib releases the GIL while it compresses. At most four blocks per thread
+    are in flight at once, so memory use stays small however large the file.
+    The blocks are the same whatever the number of threads.
+    """
+    if threads == 1:
+        for piece in pieces:
+            yield _compress_block(piece, level)
+        return
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        pending: deque[Future[bytes]] = deque()
+        for piece in pieces:
+            pending.append(pool.submit(_compress_block, piece, level))
+            if len(pending) >= 4 * threads:
+                yield pending.popleft().result()
+        while pending:
+            yield pending.popleft().result()
+
+
 class BgzfMrcFile(GzipMrcFile):
     """:class:`~mrcfile.gzipmrcfile.GzipMrcFile` subclass for BGZF files.
 
@@ -141,9 +168,46 @@ class BgzfMrcFile(GzipMrcFile):
     file. Writing splits the file into blocks of :data:`BLOCK_DATA_SIZE` bytes,
     compresses each one independently, and ends the file with
     :data:`EOF_BLOCK`. ``compresslevel`` works as it does for
-    :class:`~mrcfile.gzipmrcfile.GzipMrcFile`, with the same default of 9.
+    :class:`~mrcfile.gzipmrcfile.GzipMrcFile`, with the same default of 9, and
+    ``threads`` sets how many threads compress the blocks.
 
     """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        name: str | os.PathLike[str],
+        mode: Literal["r", "r+", "w+"] = "r",
+        *,
+        overwrite: bool = False,
+        permissive: bool = False,
+        header_only: bool = False,
+        compresslevel: int | None = None,
+        threads: int | None = None,
+    ) -> None:
+        """Initialise a new :class:`BgzfMrcFile` object.
+
+        Takes the same arguments as :class:`~mrcfile.gzipmrcfile.GzipMrcFile`,
+        plus ``threads``: the number of threads that compress the blocks when
+        the file is written. The default, :data:`None`, uses one. The file is
+        the same whatever the number of threads.
+
+        Raises:
+            :exc:`ValueError`: If ``threads`` is less than 1, or
+                ``compresslevel`` is not between 0 and 9. Both are checked
+                before the file is opened, so an invalid value never truncates
+                an existing file.
+        """
+        if threads is not None and threads < 1:
+            raise ValueError(f"threads must be at least 1, not {threads}")
+        self._threads = 1 if threads is None else threads
+        super().__init__(
+            name,
+            mode,
+            overwrite=overwrite,
+            permissive=permissive,
+            header_only=header_only,
+            compresslevel=compresslevel,
+        )
 
     def __repr__(self) -> str:
         """Return a string representation of the BgzfMrcFile object."""
@@ -171,8 +235,10 @@ class BgzfMrcFile(GzipMrcFile):
             data = memoryview(contiguous.reshape(-1).view(np.uint8))  # type: ignore[arg-type]
 
         self._fileobj.seek(0)
-        for piece in _block_data(prefix, data):
-            self._fileobj.write(_compress_block(piece, self._compresslevel))
+        pieces = _block_data(prefix, data)
+        self._fileobj.writelines(
+            _compress_blocks(pieces, self._compresslevel, self._threads)
+        )
         self._fileobj.write(EOF_BLOCK)
         self._fileobj.truncate()
         self._fileobj.flush()
