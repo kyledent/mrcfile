@@ -86,6 +86,27 @@ def test_out_of_range_level_leaves_an_existing_file_untouched(
     assert path.read_bytes() == b"precious"
 
 
+@pytest.mark.parametrize("compression", ["gzip", "bzip2", "bgzf"])
+@pytest.mark.parametrize("level", [5.5, True, "9"])
+def test_a_level_that_is_not_an_integer_leaves_an_existing_file_untouched(
+    tmp_path, volume, compression, level
+):
+    """Refused before the file is opened: the compressor would only refuse it later."""
+    path = tmp_path / "existing.mrc"
+    path.write_bytes(b"precious")
+    with pytest.raises(TypeError, match="compresslevel must be an integer"):
+        mrcfile.new(
+            path, volume, compression=compression, compresslevel=level, overwrite=True
+        )
+    assert path.read_bytes() == b"precious"
+
+
+def test_a_numpy_integer_level_is_accepted(tmp_path, volume):
+    path = tmp_path / "vol.mrc.gz"
+    mrcfile.write(path, volume, compresslevel=np.int64(1))
+    assert path.read_bytes()[8] == GZIP_XFL[1]
+
+
 def test_compresslevel_needs_compression(tmp_path, volume):
     with pytest.raises(ValueError, match="compresslevel"):
         mrcfile.new(tmp_path / "vol.mrc", volume, compresslevel=1)

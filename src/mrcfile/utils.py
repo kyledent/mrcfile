@@ -34,6 +34,7 @@ Functions
 from __future__ import annotations
 
 import math
+import numbers
 import string
 import sys
 from typing import Any, BinaryIO, Literal
@@ -64,6 +65,36 @@ def data_dtype_from_header(header: np.recarray) -> np.dtype:
     """
     mode = header.mode
     return dtype_from_mode(mode).newbyteorder(mode.dtype.byteorder)
+
+
+def check_int_argument(value: Any, name: str, low: int, high: int | None = None) -> int:
+    """Check that ``value`` is an integer from ``low`` to ``high`` inclusive.
+
+    For arguments such as compression levels, which have to be checked before a
+    file is opened: a value that the compressor only rejects when it starts
+    writing would leave an existing file truncated.
+
+    Args:
+        value: The value to check. Any integer type is accepted, :class:`bool`
+            is not.
+        name: The argument's name, for the error message.
+        low: The smallest value allowed.
+        high: The largest value allowed, or :data:`None` for no upper limit.
+
+    Returns:
+        ``value`` as a Python :class:`int`.
+
+    Raises:
+        :exc:`TypeError`: If ``value`` is not an integer.
+        :exc:`ValueError`: If ``value`` is out of range.
+    """
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise TypeError(f"{name} must be an integer, not {value!r}")
+    value = int(value)
+    if value < low or (high is not None and value > high):
+        allowed = f"at least {low}" if high is None else f"between {low} and {high}"
+        raise ValueError(f"{name} must be {allowed}, not {value}")
+    return value
 
 
 def data_block_nbytes(header: np.recarray) -> int | None:

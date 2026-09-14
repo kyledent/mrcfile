@@ -81,8 +81,9 @@ class ZstdMrcFile(MrcFile):
         Raises:
             :exc:`ImportError`: If Zstandard support is not available. It needs
                 Python 3.14 or later, or the ``backports.zstd`` package.
+            :exc:`TypeError`: If ``compresslevel`` is not an integer.
             :exc:`ValueError`: If ``compresslevel`` is outside the range the
-                Zstandard library accepts. This is checked before the file is
+                Zstandard library accepts. Both are checked before the file is
                 opened, so an invalid level never truncates an existing file.
         """
         if _zstd is None:
@@ -92,11 +93,9 @@ class ZstdMrcFile(MrcFile):
             )
         if compresslevel is not None:
             low, high = _zstd.CompressionParameter.compression_level.bounds()
-            if not low <= compresslevel <= high:
-                raise ValueError(
-                    f"zstd compresslevel must be between {low} and {high},"
-                    f" not {compresslevel}"
-                )
+            compresslevel = utils.check_int_argument(
+                compresslevel, "zstd compresslevel", low, high
+            )
         self._compresslevel = compresslevel
         super().__init__(
             name,

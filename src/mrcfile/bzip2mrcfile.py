@@ -49,13 +49,14 @@ class Bzip2MrcFile(MrcFile):
         :data:`None`, uses level 9.
 
         Raises:
-            :exc:`ValueError`: If ``compresslevel`` is not between 1 and 9. This
-                is checked before the file is opened, so an invalid level never
-                truncates an existing file.
+            :exc:`TypeError`: If ``compresslevel`` is not an integer.
+            :exc:`ValueError`: If ``compresslevel`` is not between 1 and 9.
+                Both are checked before the file is opened, so an invalid level
+                never truncates an existing file.
         """
-        if compresslevel is not None and not 1 <= compresslevel <= 9:
-            raise ValueError(
-                f"bzip2 compresslevel must be between 1 and 9, not {compresslevel}"
+        if compresslevel is not None:
+            compresslevel = utils.check_int_argument(
+                compresslevel, "bzip2 compresslevel", 1, 9
             )
         self._compresslevel = 9 if compresslevel is None else compresslevel
         super().__init__(

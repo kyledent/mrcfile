@@ -49,13 +49,14 @@ class GzipMrcFile(MrcFile):
         :data:`None`, uses level 9.
 
         Raises:
-            :exc:`ValueError`: If ``compresslevel`` is not between 0 and 9. This
-                is checked before the file is opened, so an invalid level never
-                truncates an existing file.
+            :exc:`TypeError`: If ``compresslevel`` is not an integer.
+            :exc:`ValueError`: If ``compresslevel`` is not between 0 and 9.
+                Both are checked before the file is opened, so an invalid level
+                never truncates an existing file.
         """
-        if compresslevel is not None and not 0 <= compresslevel <= 9:
-            raise ValueError(
-                f"gzip compresslevel must be between 0 and 9, not {compresslevel}"
+        if compresslevel is not None:
+            compresslevel = utils.check_int_argument(
+                compresslevel, "gzip compresslevel", 0, 9
             )
         self._compresslevel = 9 if compresslevel is None else compresslevel
         super().__init__(

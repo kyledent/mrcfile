@@ -80,6 +80,20 @@ def test_out_of_range_level_leaves_an_existing_file_untouched(tmp_path, volume, 
 
 
 @needs_zstd
+@pytest.mark.parametrize("level", [3.0, 3.5, True])
+def test_a_level_that_is_not_an_integer_leaves_an_existing_file_untouched(
+    tmp_path, volume, level
+):
+    path = tmp_path / "existing.mrc"
+    path.write_bytes(b"precious")
+    with pytest.raises(TypeError, match="compresslevel must be an integer"):
+        mrcfile.new(
+            path, volume, compression="zstd", compresslevel=level, overwrite=True
+        )
+    assert path.read_bytes() == b"precious"
+
+
+@needs_zstd
 def test_concatenated_frames_are_read_as_one_stream(tmp_path, volume):
     path = tmp_path / "vol.mrc.zst"
     mrcfile.write(path, volume)

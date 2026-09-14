@@ -175,6 +175,7 @@ def open(  # noqa: A001
             exist.
         :exc:`ImportError`: If the file is Zstandard-compressed and Zstandard
             support is not available.
+        :exc:`TypeError`: If ``threads`` is not an integer.
         :exc:`ValueError`: If ``threads`` is less than 1.
 
     Warns:
@@ -186,8 +187,8 @@ def open(  # noqa: A001
             value but the extended header's size is not a multiple of the
             number of bytes in the corresponding dtype.
     """
-    if threads is not None and threads < 1:
-        raise ValueError(f"threads must be at least 1, not {threads}")
+    if threads is not None:
+        threads = utils.check_int_argument(threads, "threads", 1)
     NewMrc = MrcFile  # noqa: N806
     name = str(name)  # in case name is a pathlib Path
     if os.path.exists(name):
@@ -243,6 +244,7 @@ def read(
         :data:`None` if the data could not be read.
 
     Raises:
+        :exc:`TypeError`: If ``threads`` is not an integer.
         :exc:`ValueError`: If ``threads`` is less than 1.
     """
     with open(name, mode="r", permissive=True, threads=threads) as mrc:

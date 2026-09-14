@@ -237,6 +237,17 @@ def test_threads_must_be_positive(tmp_path, threads):
     assert not path.exists()
 
 
+@pytest.mark.parametrize("threads", [2.5, True, "4"])
+def test_threads_must_be_an_integer(tmp_path, volume, threads):
+    path = tmp_path / "bad.mrc.gz"
+    with pytest.raises(TypeError, match="threads must be an integer"):
+        mrcfile.new(path, compression="bgzf", threads=threads)
+    assert not path.exists()
+    existing, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+    with pytest.raises(TypeError, match="threads must be an integer"):
+        mrcfile.open(existing, threads=threads)
+
+
 @pytest.mark.parametrize("compression", [None, "gzip", "bzip2", "zstd"])
 def test_threads_need_bgzf(tmp_path, compression):
     path = tmp_path / "other.mrc"

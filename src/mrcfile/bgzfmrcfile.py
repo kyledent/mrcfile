@@ -38,6 +38,7 @@ from typing import BinaryIO, Literal, cast
 
 import numpy as np
 
+from . import utils
 from .gzipmrcfile import GzipMrcFile
 
 #: Uncompressed bytes per block. A compressed block may be at most 64 KiB, and
@@ -278,13 +279,15 @@ class BgzfMrcFile(GzipMrcFile):
         are the same whatever the number of threads.
 
         Raises:
+            :exc:`TypeError`: If ``threads`` or ``compresslevel`` is not an
+                integer.
             :exc:`ValueError`: If ``threads`` is less than 1, or
-                ``compresslevel`` is not between 0 and 9. Both are checked
-                before the file is opened, so an invalid value never truncates
-                an existing file.
+                ``compresslevel`` is not between 0 and 9. All of these are
+                checked before the file is opened, so an invalid value never
+                truncates an existing file.
         """
-        if threads is not None and threads < 1:
-            raise ValueError(f"threads must be at least 1, not {threads}")
+        if threads is not None:
+            threads = utils.check_int_argument(threads, "threads", 1)
         self._threads = 1 if threads is None else threads
         # Set by a parallel read: the bytes after the data block, None if unknown
         self._trailing_bytes: int | None = None
