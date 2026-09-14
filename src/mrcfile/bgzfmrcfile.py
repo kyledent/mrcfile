@@ -107,6 +107,8 @@ def bgzf_blocks(stream: BinaryIO) -> Iterator[tuple[int, int]]:
         if not is_bgzf(header):
             raise ValueError(f"No BGZF block header at byte {offset}")
         size = int(_HEADER.unpack(header)[-1]) + 1
+        if size < _HEADER.size + _TRAILER.size:
+            raise ValueError(f"The BGZF block at byte {offset} is too small")
         if offset + size > end:
             raise ValueError(f"The BGZF block at byte {offset} runs past the end")
         yield offset, size
@@ -196,13 +198,17 @@ def _read_blocks_into(
     The blocks are read in order and decompressed on ``threads`` threads, each
     straight into its place in ``out``, a flat array of bytes. Blocks are handed
     out eight at a time, and at most two such tasks per thread are in flight at
-    once, so memory use stays small however large the file.
+    once, so memory use stays small however large the file. Blocks before and
+    after the part of the file that ``out`` covers are decompressed too, into
+    nothing, so that every block's CRC and length are checked, as they are when
+    the file is read on one thread.
 
     Returns:
         ``(filled, total)``: how many bytes of ``out`` were filled, which is
         fewer if the file is too short, and the file's total uncompressed
-        length. :data:`None` if the file is not a clean run of BGZF blocks, so
-        that the caller can read it some other way.
+        length. :data:`None` if the file is not a clean run of BGZF blocks
+        without other gzip header fields, so that the caller can read it some
+        other way.
 
     Raises:
         :exc:`gzip.BadGzipFile`: If a block's CRC or length does not match its
@@ -221,7 +227,8 @@ def _read_blocks_into(
         offset = 0
         while offset < end:
             header = f.read(_HEADER.size)
-            if not is_bgzf(header):
+            # Any gzip flag but FEXTRA adds fields between the header and the data
+            if not is_bgzf(header) or header[3] != 0x04:
                 return None
             size = int(_HEADER.unpack(header)[-1]) + 1
             if size < _HEADER.size + _TRAILER.size or offset + size > end:
@@ -229,14 +236,15 @@ def _read_blocks_into(
             body = f.read(size - _HEADER.size)
             crc, isize = _TRAILER.unpack(body[-_TRAILER.size :])
             low, high = max(total, start), min(total + isize, stop)
-            if low < high:
-                target = view[low - start : high - start]
-                batch.append((body, crc, isize, target, low - total))
-                if len(batch) == _BLOCKS_PER_TASK:
-                    pending.append(pool.submit(_inflate_blocks, batch))
-                    batch = []
-                    if len(pending) >= 2 * threads:
-                        pending.popleft().result()
+            # A block outside the part ``out`` covers fills nothing, but is still
+            # decompressed, so that its CRC and length are checked
+            target = view[low - start : high - start] if low < high else view[:0]
+            batch.append((body, crc, isize, target, low - total))
+            if len(batch) == _BLOCKS_PER_TASK:
+                pending.append(pool.submit(_inflate_blocks, batch))
+                batch = []
+                if len(pending) >= 2 * threads:
+                    pending.popleft().result()
             offset += size
             total += isize
         if batch:

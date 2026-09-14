@@ -354,6 +354,53 @@ def test_threaded_read_detects_a_bad_crc(tmp_path, volume, threads):
         mrcfile.open(path, threads=threads)
 
 
+@pytest.mark.parametrize("threads", [1, 4])
+def test_a_bad_crc_after_the_data_is_detected(tmp_path, volume, threads):
+    """Two blocks of trailing bytes, so at least one block lies after the data."""
+    raw = plain_file_bytes(tmp_path, volume) + bytes(2 * BLOCK_DATA_SIZE)
+    path = bgzf_of(raw, tmp_path / "x.mrc.gz")
+    damaged = bytearray(path.read_bytes())
+    offset, size = blocks_of(path)[-2]  # the last block before the end-of-file block
+    damaged[offset + size - 8] ^= 0xFF
+    path.write_bytes(bytes(damaged))
+    with pytest.raises(gzip.BadGzipFile):
+        mrcfile.open(path, threads=threads)
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_a_bad_crc_before_the_data_is_detected(tmp_path, volume, threads):
+    """An extended header that fills the first block, which then holds no data."""
+    path = tmp_path / "ext.mrc.gz"
+    with mrcfile.new(path, volume, compression="bgzf") as mrc:
+        mrc.set_extended_header(np.frombuffer(bytes(BLOCK_DATA_SIZE - 1024), "V1"))
+    damaged = bytearray(path.read_bytes())
+    offset, size = blocks_of(path)[0]
+    damaged[offset + size - 8] ^= 0xFF
+    path.write_bytes(bytes(damaged))
+    with pytest.raises(gzip.BadGzipFile):
+        mrcfile.open(path, threads=threads)
+
+
+def test_bgzf_blocks_refuses_a_block_too_small_for_its_trailer():
+    tiny = bgzfmrcfile._HEADER.pack(0x1F, 0x8B, 8, 4, 0, 0, 0xFF, 6, 0x42, 0x43, 2, 17)
+    with pytest.raises(ValueError, match="is too small"):
+        list(bgzf_blocks(io.BytesIO(tiny + EOF_BLOCK)))
+
+
+def test_threaded_read_of_a_block_with_other_gzip_fields(tmp_path, volume):
+    """A file name in the first block's header moves its data: read on one thread."""
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+    raw = path.read_bytes()
+    _, size = blocks_of(path)[0]
+    block = bytearray(raw[:size])
+    block[3] |= 0x08  # FNAME
+    block[16:18] = (size + 2 - 1).to_bytes(2, "little")  # BSIZE, the block size - 1
+    path.write_bytes(bytes(block[:18]) + b"x\0" + bytes(block[18:]) + raw[size:])
+    assert is_bgzf(path.read_bytes())
+    with mrcfile.open(path, threads=4) as mrc:
+        np.testing.assert_array_equal(mrc.data, volume)
+
+
 def test_threaded_read_of_plain_multi_member_gzip(tmp_path, volume):
     """A gzip file that is not BGZF is read on one thread."""
     raw = plain_file_bytes(tmp_path, volume)
@@ -406,6 +453,6 @@ def test_threaded_read_hands_out_blocks_in_batches(tmp_path, big_volume, monkeyp
     monkeypatch.setattr(bgzfmrcfile, "_inflate_blocks", spy)
     with mrcfile.open(path, threads=4) as mrc:
         np.testing.assert_array_equal(mrc.data, big_volume)
-    # Every block holding data is handed out once, at most eight to a task
-    assert sum(sizes) == len(blocks_of(path)) - 1
+    # Every block is handed out once, at most eight to a task
+    assert sum(sizes) == len(blocks_of(path))
     assert max(sizes) == bgzfmrcfile._BLOCKS_PER_TASK
