@@ -8,7 +8,7 @@ boundaries, non-contiguous views and both byte orders.
 """
 
 import math
-from decimal import Decimal, getcontext
+from decimal import Decimal, localcontext
 
 import numpy as np
 import pytest
@@ -144,15 +144,28 @@ def test_block_size_does_not_change_the_answer():
 
 def test_is_at_least_as_accurate_as_float32_accumulation():
     """The reason for FORK DEVIATION D1, asserted rather than claimed."""
-    getcontext().prec = 60
     img = np.linspace(-32768, 32767, 90, dtype=np.int16).reshape(9, 10)
     vol = img // np.arange(1, 6, dtype=np.int16).reshape(5, 1, 1)
 
-    values = [Decimal(int(v)) for v in vol.ravel()]
-    n = Decimal(len(values))
-    exact_mean = sum(values) / n
-    exact_rms = (sum((v - exact_mean) ** 2 for v in values) / n).sqrt()
+    # A local context, so the precision does not leak into other tests
+    with localcontext() as ctx:
+        ctx.prec = 60
+        values = [Decimal(int(v)) for v in vol.ravel()]
+        n = Decimal(len(values))
+        exact_mean = sum(values) / n
+        exact_rms = (sum((v - exact_mean) ** 2 for v in values) / n).sqrt()
 
-    fork_err = abs(Decimal(calculate_stats(vol)[3]) - exact_rms)
-    upstream_err = abs(Decimal(float(vol.std(dtype=np.float32))) - exact_rms)
+        fork_err = abs(Decimal(calculate_stats(vol)[3]) - exact_rms)
+        upstream_err = abs(Decimal(float(vol.std(dtype=np.float32))) - exact_rms)
     assert fork_err <= upstream_err
+
+
+@pytest.mark.parametrize("value", [np.inf, -np.inf])
+def test_an_infinity_in_the_first_block_gives_numpys_mean(value):
+    """The first block sets the shift; an infinite shift would make the mean NaN."""
+    arr = np.arange(1000, dtype=np.float32)
+    arr[0] = value
+    _, _, mean, rms = calculate_stats(arr)
+    with np.errstate(invalid="ignore"):
+        assert mean == arr.mean(dtype=np.float64) == value
+        assert math.isnan(rms) and math.isnan(arr.std(dtype=np.float64))

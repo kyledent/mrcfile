@@ -375,8 +375,9 @@ def calculate_stats(
     This is equivalent to calling :meth:`~numpy.ndarray.min`,
     :meth:`~numpy.ndarray.max`, :meth:`~numpy.ndarray.mean` and
     :meth:`~numpy.ndarray.std` separately, but traverses the array once instead
-    of roughly five times, and uses a fixed small amount of scratch memory
-    instead of allocating a temporary the same size as the data. The saving is
+    of roughly five times. Its scratch memory is a few float64 temporaries the
+    size of one block, rather than temporaries the size of the data, though an
+    array that is not contiguous is copied whole first. The saving is
     largest for memory-mapped arrays, where each avoided pass is an avoided
     read of the whole file.
 
@@ -404,8 +405,12 @@ def calculate_stats(
     if n == 0:
         raise ValueError("Cannot calculate statistics for an empty array")
 
-    # Provisional mean from the first block, used as a shift for stability
+    # Provisional mean from the first block, used as a shift for stability. An
+    # infinity there would turn every deviation into inf - inf = NaN, so no
+    # shift is used then.
     shift = float(np.mean(flat[: min(block_size, n)], dtype=np.float64))
+    if not math.isfinite(shift):
+        shift = 0.0
 
     min_: Any = None
     max_: Any = None
@@ -425,7 +430,7 @@ def calculate_stats(
             min_ = min(min_, chunk_min)
             max_ = max(max_, chunk_max)
 
-        # Cache-resident widening: the copy never leaves L2
+        # Widen one block at a time, so the float64 temporaries stay block-sized
         deviations = chunk.astype(np.float64) - shift
         total += float(deviations.sum())
         total_sq += float(np.dot(deviations, deviations))
