@@ -56,7 +56,9 @@ def test_compresslevel_reaches_the_compressor(tmp_path, volume, monkeypatch, lev
 
     def spy(*args, **kwargs):
         if kwargs.get("mode") == "wb":
-            seen.append(kwargs.get("level"))
+            options = kwargs.get("options") or {}
+            params = zstdmrcfile._zstd.CompressionParameter
+            seen.append(options.get(params.compression_level))
         return real_zstd_file(*args, **kwargs)
 
     monkeypatch.setattr(zstdmrcfile._zstd, "ZstdFile", spy)
@@ -91,6 +93,37 @@ def test_a_level_that_is_not_an_integer_leaves_an_existing_file_untouched(
             path, volume, compression="zstd", compresslevel=level, overwrite=True
         )
     assert path.read_bytes() == b"precious"
+
+
+@needs_zstd
+def test_frames_carry_a_checksum(tmp_path, volume):
+    path = tmp_path / "vol.mrc.zst"
+    mrcfile.write(path, volume)
+    # In the frame header's descriptor byte, bit 2 is the content checksum flag
+    assert path.read_bytes()[4] & 0x04
+
+
+@needs_zstd
+def test_a_damaged_file_is_refused(tmp_path, volume):
+    """The last four bytes are the checksum, so the data still decode."""
+    path = tmp_path / "vol.mrc.zst"
+    mrcfile.write(path, volume)
+    raw = bytearray(path.read_bytes())
+    raw[-1] ^= 0xFF
+    path.write_bytes(bytes(raw))
+    with pytest.raises(zstdmrcfile._zstd.ZstdError):
+        mrcfile.open(path)
+
+
+@needs_zstd
+def test_a_leading_skippable_frame_is_recognised(tmp_path, volume):
+    path = tmp_path / "vol.mrc.zst"
+    mrcfile.write(path, volume)
+    skippable = (0x184D2A50).to_bytes(4, "little") + (4).to_bytes(4, "little")
+    path.write_bytes(skippable + bytes(4) + path.read_bytes())
+    with mrcfile.open(path) as mrc:
+        assert isinstance(mrc, ZstdMrcFile)
+        np.testing.assert_array_equal(mrc.data, volume)
 
 
 @needs_zstd

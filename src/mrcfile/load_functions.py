@@ -211,7 +211,10 @@ def open(  # noqa: A001
                 NewMrc = BgzfMrcFile if is_bgzf(start) else GzipMrcFile  # noqa: N806
             elif start[:2] == b"BZ":
                 NewMrc = Bzip2MrcFile  # noqa: N806
-            elif start[:4] == b"\x28\xb5\x2f\xfd":
+            elif start[:4] == b"\x28\xb5\x2f\xfd" or (
+                # A skippable frame, which pzstd, for one, writes first
+                0x184D2A50 <= int.from_bytes(start[:4], "little") <= 0x184D2A5F
+            ):
                 NewMrc = ZstdMrcFile  # noqa: N806
     if NewMrc is BgzfMrcFile:
         return BgzfMrcFile(

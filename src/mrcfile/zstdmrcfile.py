@@ -58,6 +58,8 @@ class ZstdMrcFile(MrcFile):
     Usage is the same as for :class:`~mrcfile.mrcfile.MrcFile`, except that the
     constructor also accepts ``compresslevel``: the Zstandard compression level to
     use when the file is written. The default is Zstandard's own default level.
+    Files are written with a checksum of their content, so a damaged file raises
+    an error when it is read, as a damaged gzip or bzip2 file does.
 
     """
 
@@ -204,9 +206,16 @@ class ZstdMrcFile(MrcFile):
         if not self._read_only and self._iostream is not None:
             self._iostream.close()
             self._fileobj.seek(0)
+            # Every frame carries a checksum of its content, as the zstd command
+            # line tool writes by default, so that a damaged file is refused
+            # rather than read. libzstd leaves the checksum off unless asked.
+            params = _zstd.CompressionParameter
+            options = {params.checksum_flag: 1}
+            if self._compresslevel is not None:
+                options[params.compression_level] = self._compresslevel
             self._iostream = cast(
                 BinaryIO,
-                _zstd.ZstdFile(self._fileobj, mode="wb", level=self._compresslevel),
+                _zstd.ZstdFile(self._fileobj, mode="wb", options=options),
             )  # cast needed because of awkward IO types
 
             # Header and extended header are small, so a copy is fine. The data
