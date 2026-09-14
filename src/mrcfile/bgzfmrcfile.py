@@ -162,24 +162,28 @@ def _compress_blocks(
             yield pending.popleft().result()
 
 
-def _inflate_into(
-    body: bytes, crc: int, isize: int, target: np.ndarray, skip: int
-) -> None:
-    """Decompress the body of one block and copy part of it into ``target``.
+# Blocks per task when decompressing on several threads, so that the cost of
+# handing out work, and of switching between threads, is shared by several blocks
+_BLOCKS_PER_TASK = 8
 
-    ``body`` is the block after its header: the DEFLATE data, then the CRC32 and
-    length of the uncompressed data. The decompressed bytes from offset ``skip``
-    onwards fill ``target``.
+
+def _inflate_blocks(batch: list[tuple[bytes, int, int, memoryview, int]]) -> None:
+    """Decompress a few blocks, each into its place in the output.
+
+    Each entry holds a block's body (the DEFLATE data, then the CRC32 and length
+    of the uncompressed data), that CRC32 and length, the slice of the output the
+    block fills, and how many of its leading decompressed bytes to skip.
 
     Raises:
-        :exc:`gzip.BadGzipFile`: If the CRC or the length does not match.
+        :exc:`gzip.BadGzipFile`: If a block's CRC or length does not match.
     """
-    data = zlib.decompress(memoryview(body)[: -_TRAILER.size], -zlib.MAX_WBITS)
-    if len(data) != isize:
-        raise gzip.BadGzipFile("Incorrect length of data produced")
-    if zlib.crc32(data) != crc:
-        raise gzip.BadGzipFile("CRC check failed")
-    target[:] = np.frombuffer(data, dtype=np.uint8, count=len(target), offset=skip)
+    for body, crc, isize, target, skip in batch:
+        data = zlib.decompress(memoryview(body)[: -_TRAILER.size], -zlib.MAX_WBITS)
+        if len(data) != isize:
+            raise gzip.BadGzipFile("Incorrect length of data produced")
+        if zlib.crc32(data) != crc:
+            raise gzip.BadGzipFile("CRC check failed")
+        target[:] = memoryview(data)[skip : skip + len(target)]
 
 
 def _read_blocks_into(
@@ -188,8 +192,9 @@ def _read_blocks_into(
     """Decompress a BGZF file, from uncompressed offset ``start``, into ``out``.
 
     The blocks are read in order and decompressed on ``threads`` threads, each
-    straight into its place in ``out``, a flat array of bytes. At most four
-    blocks per thread are in flight at once.
+    straight into its place in ``out``, a flat array of bytes. Blocks are handed
+    out eight at a time, and at most two such tasks per thread are in flight at
+    once, so memory use stays small however large the file.
 
     Returns:
         ``(filled, total)``: how many bytes of ``out`` were filled, which is
@@ -203,11 +208,14 @@ def _read_blocks_into(
         :exc:`zlib.error`: If a block's compressed data is corrupt.
     """
     stop = start + len(out)
+    # NumPy's stubs before 2.1 do not type ndarray as a buffer for Python 3.9
+    view = memoryview(out)  # type: ignore[arg-type]
     total = 0
     with open(path, "rb") as f, ThreadPoolExecutor(max_workers=threads) as pool:
         end = f.seek(0, os.SEEK_END)
         f.seek(0)
         pending: deque[Future[None]] = deque()
+        batch: list[tuple[bytes, int, int, memoryview, int]] = []
         offset = 0
         while offset < end:
             header = f.read(_HEADER.size)
@@ -220,14 +228,17 @@ def _read_blocks_into(
             crc, isize = _TRAILER.unpack(body[-_TRAILER.size :])
             low, high = max(total, start), min(total + isize, stop)
             if low < high:
-                target = out[low - start : high - start]
-                pending.append(
-                    pool.submit(_inflate_into, body, crc, isize, target, low - total)
-                )
-                if len(pending) >= 4 * threads:
-                    pending.popleft().result()
+                target = view[low - start : high - start]
+                batch.append((body, crc, isize, target, low - total))
+                if len(batch) == _BLOCKS_PER_TASK:
+                    pending.append(pool.submit(_inflate_blocks, batch))
+                    batch = []
+                    if len(pending) >= 2 * threads:
+                        pending.popleft().result()
             offset += size
             total += isize
+        if batch:
+            pending.append(pool.submit(_inflate_blocks, batch))
         for future in pending:
             future.result()
     return max(0, min(stop, total) - start), total

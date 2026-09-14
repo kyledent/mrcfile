@@ -363,3 +363,20 @@ def test_rewrite_on_several_threads(tmp_path, big_volume):
 def test_read_function_accepts_threads(tmp_path, big_volume):
     path, _ = write_bgzf(tmp_path / "vol.mrc.gz", big_volume)
     np.testing.assert_array_equal(mrcfile.read(path, threads=4), big_volume)
+
+
+def test_threaded_read_hands_out_blocks_in_batches(tmp_path, big_volume, monkeypatch):
+    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", big_volume)
+    sizes = []
+    real_inflate = bgzfmrcfile._inflate_blocks
+
+    def spy(batch):
+        sizes.append(len(batch))
+        real_inflate(batch)
+
+    monkeypatch.setattr(bgzfmrcfile, "_inflate_blocks", spy)
+    with mrcfile.open(path, threads=4) as mrc:
+        np.testing.assert_array_equal(mrc.data, big_volume)
+    # Every block holding data is handed out once, at most eight to a task
+    assert sum(sizes) == len(blocks_of(path)) - 1
+    assert max(sizes) == bgzfmrcfile._BLOCKS_PER_TASK
