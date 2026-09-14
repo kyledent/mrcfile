@@ -168,6 +168,17 @@ of threads:
           [ 4,  5,  6,  7],
           [ 8,  9, 10, 11]], dtype=int8)
 
+With an NVIDIA GPU, a BGZF file can also be decoded straight into GPU memory,
+where its blocks are decompressed thousands at a time and each block's CRC32 is
+checked. This needs CuPy and nvCOMP's Python package (``pip install
+mrcfile[gpu]``) and a GPU that nvCOMP supports:
+
+.. code-block:: python
+
+   from mrcfile.bgzfgpu import read_to_gpu
+
+   data = read_to_gpu('tmp5.mrc.gz')  # a CuPy array on the current GPU
+
 Closing files and writing to disk
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

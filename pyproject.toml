@@ -50,6 +50,10 @@ optional-dependencies.dev = [
 optional-dependencies.zstd = [
     "backports.zstd; python_version < '3.14'",
 ]
+optional-dependencies.gpu = [
+    "cupy-cuda12x; sys_platform == 'linux' or sys_platform == 'win32'",
+    "nvidia-nvcomp-cu12; sys_platform == 'linux' or sys_platform == 'win32'",
+]
 
 [project.urls]
 homepage = "https://github.com/ccpem/mrcfile"

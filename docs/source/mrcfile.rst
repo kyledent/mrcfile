@@ -16,6 +16,16 @@ mrcfile -- Main package
 Submodules
 ----------
 
+mrcfile.bgzfgpu module
+----------------------
+
+.. automodule:: mrcfile.bgzfgpu
+    :special-members: __init__
+    :members:
+    :undoc-members:
+    :private-members:
+    :show-inheritance:
+
 mrcfile.bgzfmrcfile module
 --------------------------
 
