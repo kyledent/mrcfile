@@ -5,6 +5,8 @@ versions, so most of these tests are skipped without it. The tests of what happe
 when support is missing run everywhere, by hiding the module.
 """
 
+import struct
+
 import numpy as np
 import pytest
 
@@ -97,6 +99,22 @@ def test_trailing_bytes_are_reported(tmp_path, volume):
     path.write_bytes(zstdmrcfile._zstd.compress(raw + b"extra"))
     with pytest.warns(RuntimeWarning, match="5 bytes larger than expected"):
         mrcfile.open(path).close()
+
+
+@needs_zstd
+def test_a_header_claiming_too_much_data_is_refused_before_reading(tmp_path, volume):
+    path = tmp_path / "vol.mrc.zst"
+    mrcfile.write(path, volume)
+    raw = bytearray(zstdmrcfile._zstd.decompress(path.read_bytes()))
+    raw[:12] = struct.pack("<3i", 40000, 40000, 40000)
+    path.write_bytes(zstdmrcfile._zstd.compress(bytes(raw)))
+    with pytest.raises(ValueError, match="limit is"):
+        mrcfile.open(path)
+    with (
+        pytest.warns(RuntimeWarning, match="limit is"),
+        mrcfile.open(path, permissive=True) as mrc,
+    ):
+        assert mrc.data is None
 
 
 @needs_zstd

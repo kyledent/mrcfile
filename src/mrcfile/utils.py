@@ -66,6 +66,24 @@ def data_dtype_from_header(header: np.recarray) -> np.dtype:
     return dtype_from_mode(mode).newbyteorder(mode.dtype.byteorder)
 
 
+def data_block_nbytes(header: np.recarray) -> int | None:
+    """Return the size in bytes of the data block that ``header`` describes.
+
+    Args:
+        header: The MRC header, as a :class:`numpy.recarray`.
+
+    Returns:
+        The size in bytes, or :data:`None` if the header does not describe a
+        valid data block, for example because its mode is not recognised.
+    """
+    try:
+        dtype = data_dtype_from_header(header)
+        shape = data_shape_from_header(header)
+    except ValueError:
+        return None
+    return dtype.itemsize * math.prod(int(n) for n in shape)
+
+
 def data_shape_from_header(
     header: np.recarray,
 ) -> tuple[int, int] | tuple[int, int, int] | tuple[int, int, int, int]:

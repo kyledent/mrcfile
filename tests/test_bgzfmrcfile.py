@@ -2,6 +2,7 @@
 
 import gzip
 import io
+import struct
 import zlib
 
 import numpy as np
@@ -133,11 +134,11 @@ def test_flush_leaves_a_complete_file(tmp_path, volume):
         assert mrc.data[0, 0, 0] == 99
 
 
-def test_reader_does_not_trust_the_last_size_field(tmp_path, volume):
-    """The last block is the end-of-file block, whose size field reads 0."""
-    path, _ = write_bgzf(tmp_path / "vol.mrc.gz", volume)
+def test_uncompressed_size_is_the_sum_of_the_blocks(tmp_path, volume):
+    """Not the last gzip trailer: that is the end-of-file block's, which reads 0."""
+    path, expected = write_bgzf(tmp_path / "vol.mrc.gz", volume)
     with mrcfile.open(path) as mrc:
-        assert mrc._uncompressed_size_from_trailer() is None
+        assert mrc._uncompressed_size_from_trailer() == len(expected)
         np.testing.assert_array_equal(mrc.data, volume)
 
 
@@ -308,10 +309,27 @@ def test_threaded_read_reports_trailing_bytes(tmp_path, volume, threads):
 
 @pytest.mark.parametrize("threads", [1, 4])
 def test_threaded_read_of_a_short_file(tmp_path, volume, threads):
+    """Upstream's error: the data block does not fit in what the blocks hold."""
     path = bgzf_of(plain_file_bytes(tmp_path, volume)[:-100], tmp_path / "x.mrc.gz")
-    expected = f"Expected {volume.nbytes} bytes in data block but could only read"
+    expected = f"Expected {volume.nbytes} bytes in data block but limit is"
     with pytest.raises(ValueError, match=expected):
         mrcfile.open(path, threads=threads)
+
+
+@pytest.mark.parametrize("threads", [1, 4])
+def test_a_header_claiming_too_much_data_is_refused_before_reading(
+    tmp_path, volume, threads
+):
+    raw = bytearray(plain_file_bytes(tmp_path, volume))
+    raw[:12] = struct.pack("<3i", 40000, 40000, 40000)
+    path = bgzf_of(bytes(raw), tmp_path / "huge.mrc.gz")
+    with pytest.raises(ValueError, match="limit is"):
+        mrcfile.open(path, threads=threads)
+    with (
+        pytest.warns(RuntimeWarning, match="limit is"),
+        mrcfile.open(path, permissive=True, threads=threads) as mrc,
+    ):
+        assert mrc.data is None
 
 
 @pytest.mark.parametrize("threads", [1, 4])

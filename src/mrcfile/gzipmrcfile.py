@@ -117,18 +117,18 @@ class GzipMrcFile(MrcFile):
         return pos + extra
 
     def _uncompressed_size_from_trailer(self) -> int | None:
-        """Return the uncompressed length from the gzip ISIZE trailer.
+        """Return the gzip ISIZE trailer, a hint of the uncompressed length.
 
-        The last four bytes of a gzip member hold the uncompressed size modulo
-        2**32. Reading them costs two syscalls on a separate file handle, so
-        the live :class:`~gzip.GzipFile` is never disturbed.
+        The last four bytes of a gzip member hold the length of its uncompressed
+        data modulo 2**32. Reading them costs two syscalls on a separate file
+        handle, so the live :class:`~gzip.GzipFile` is never disturbed.
 
-        ISIZE is unreliable in two cases: the counter wraps for streams of 4 GiB
-        or more, and for a multi-member file it describes only the last member.
-        Both make it an under-estimate, and DEFLATE cannot shrink data, so an
-        ISIZE below the compressed length proves the value is untrustworthy.
-        :data:`None` is returned in that case, and the caller falls back to
-        reading without a cap.
+        The value is exact only for a single-member file under 4 GiB: in a
+        multi-member file it counts only the last member, and it wraps for
+        longer streams. :meth:`_read_data` therefore uses it only as a limit
+        that the data block fits within. A value below the compressed length is
+        not returned, and nor is anything when the file cannot be reopened by
+        name: :data:`None` is returned instead.
         """
         name = getattr(self._fileobj, "name", None)
         if not isinstance(name, str):
@@ -136,7 +136,7 @@ class GzipMrcFile(MrcFile):
         try:
             with builtins.open(name, "rb") as raw:
                 compressed = raw.seek(0, os.SEEK_END)
-                if compressed < 18:  # smaller than an empty gzip member
+                if compressed < 20:  # smaller than an empty gzip member
                     return None
                 raw.seek(-4, os.SEEK_END)
                 isize = int.from_bytes(raw.read(4), "little")
@@ -145,14 +145,20 @@ class GzipMrcFile(MrcFile):
         return isize if isize >= compressed else None
 
     def _read_data(self) -> None:
-        """Read the data block using a single forward decompression pass.
+        """Read the data block, in a single forward pass when the trailer allows.
 
-        The inherited implementation calls :meth:`_get_file_size` first, purely
-        to work out a sanity limit and to spot trailing bytes. For a compressed
-        stream that measurement costs two extra full decompressions. Here the
-        limit comes from the ISIZE trailer instead, and trailing bytes are
-        counted by continuing forwards after the data block rather than by
+        The inherited implementation calls :meth:`_get_file_size` first, to set a
+        limit on the data block and to spot trailing bytes, and for a compressed
+        stream that costs two extra full decompressions. Here, when the data
+        block fits within the length the ISIZE trailer gives, that length is the
+        limit, and trailing bytes are counted by reading forwards rather than by
         rewinding.
+
+        A data block larger than ISIZE may still be valid, because ISIZE counts
+        only the last member of a multi-member file and wraps at 4 GiB. The file
+        is then measured exactly, as :class:`~mrcfile.mrcfile.MrcFile` does. That
+        is slower, but a valid file is never refused, and a header that claims
+        more data than the file holds is refused before anything is allocated.
         """
         if self.header is None:
             raise RuntimeError(
@@ -160,10 +166,12 @@ class GzipMrcFile(MrcFile):
             )
         header_size = self.header.nbytes + int(self.header.nsymbt)
         total = self._uncompressed_size_from_trailer()
-        # max_bytes of 0 means "no limit" to _read_data_from_stream
-        max_bytes = total - header_size if total is not None else 0
+        needed = utils.data_block_nbytes(self.header)
+        if total is None or needed is None or needed > total - header_size:
+            super()._read_data()
+            return
 
-        super(MrcFile, self)._read_data_from_stream(max_bytes=max_bytes)
+        self._read_data_from_stream(max_bytes=total - header_size)
 
         if self.data is not None:
             extra = self._count_remaining_bytes()

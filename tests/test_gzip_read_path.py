@@ -8,7 +8,9 @@ fallback matters as much as the fast path and is tested here directly.
 """
 
 import gzip
+import io
 import os
+import struct
 import warnings
 
 import numpy as np
@@ -101,7 +103,7 @@ def test_multi_member_trailer_is_rejected(tmp_path, volume):
 
     with mrcfile.open(str(path)) as mrc:
         # Last member's ISIZE is below the total compressed length, so the
-        # value must be refused and the read must proceed without a cap.
+        # value must be refused and the file measured exactly instead.
         assert mrc._uncompressed_size_from_trailer() is None
         np.testing.assert_array_equal(mrc.data, volume)
 
@@ -143,3 +145,51 @@ def test_write_then_read_roundtrip(tmp_path, volume):
     with mrcfile.open(str(path)) as mrc:
         np.testing.assert_array_equal(mrc.data, volume)
         assert mrc.header.dmax == np.float32(volume.max())
+
+
+def plain_bytes(tmp_path, data):
+    plain = tmp_path / "plain.mrc"
+    with mrcfile.new(str(plain), overwrite=True) as mrc:
+        mrc.set_data(data)
+    return plain.read_bytes()
+
+
+def test_multi_member_file_whose_last_member_looks_usable(tmp_path):
+    """The header and the data as two members, with data that compresses well.
+
+    The last member's ISIZE is then above the compressed length, so it passes
+    the trailer check, but it counts only the data, so it is too small to be a
+    limit on the data block. The file must still be read.
+    """
+    data = np.zeros((64, 64, 64), dtype=np.float32)
+    raw = plain_bytes(tmp_path, data)
+    path = tmp_path / "multi.mrc.gz"
+    path.write_bytes(gzip.compress(raw[:1024]) + gzip.compress(raw[1024:]))
+
+    with mrcfile.open(str(path)) as mrc:
+        np.testing.assert_array_equal(mrc.data, data)
+    np.testing.assert_array_equal(mrcfile.read(str(path)), data)
+    assert mrcfile.validate(str(path), print_file=io.StringIO())
+
+
+@pytest.mark.parametrize("level", [0, 6])
+def test_a_header_claiming_too_much_data_is_refused_before_reading(
+    tmp_path, volume, level
+):
+    """Upstream's error, whether or not the trailer can be used as a limit.
+
+    At level 0 the trailer is below the compressed length and is not used; at
+    level 6 it is used but the data block does not fit within it.
+    """
+    raw = bytearray(plain_bytes(tmp_path, volume))
+    raw[:12] = struct.pack("<3i", 40000, 40000, 40000)
+    path = tmp_path / "huge.mrc.gz"
+    path.write_bytes(gzip.compress(bytes(raw), compresslevel=level))
+
+    with pytest.raises(ValueError, match="limit is"):
+        mrcfile.open(str(path))
+    with (
+        pytest.warns(RuntimeWarning, match="limit is"),
+        mrcfile.open(str(path), permissive=True) as mrc,
+    ):
+        assert mrc.data is None

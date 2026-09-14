@@ -25,6 +25,7 @@ Functions:
 
 from __future__ import annotations
 
+import builtins
 import gzip
 import os
 import struct
@@ -300,6 +301,29 @@ class BgzfMrcFile(GzipMrcFile):
         """Return a string representation of the BgzfMrcFile object."""
         return f"BgzfMrcFile('{self._fileobj.name}', mode='{self._mode}')"
 
+    def _uncompressed_size_from_trailer(self) -> int | None:
+        """Return the uncompressed length: the sum of every block's ISIZE.
+
+        In a BGZF file the last gzip member is the empty end-of-file block, so
+        the gzip trailer says nothing about the data. Each block's own ISIZE is
+        exact, because no block holds more than 64 KiB, and the blocks can be
+        found from their headers, so the total costs two small reads a block.
+        :data:`None` if the file is not a clean run of BGZF blocks, or cannot be
+        reopened by name.
+        """
+        name = getattr(self._fileobj, "name", None)
+        if not isinstance(name, str):
+            return None
+        total = 0
+        try:
+            with builtins.open(name, "rb") as raw:
+                for offset, size in bgzf_blocks(raw):
+                    raw.seek(offset + size - 4)
+                    total += int.from_bytes(raw.read(4), "little")
+        except (OSError, ValueError):
+            return None
+        return total
+
     def _read_data(self) -> None:
         """Read the data block, decompressing its blocks on several threads.
 
@@ -307,16 +331,23 @@ class BgzfMrcFile(GzipMrcFile):
         :class:`~mrcfile.gzipmrcfile.GzipMrcFile`. With more, the blocks that
         hold the data block are read in order from a separate file handle and
         decompressed in parallel, straight into the new array, and each block's
-        CRC and length are checked against its trailer. The checks on the
-        result, and the errors and warnings for a data block that is too short
-        or too long, are the same as with one thread. A file that is not a
-        clean run of BGZF blocks is read on one thread.
+        CRC and length are checked against its trailer. The data block is
+        limited to the length the blocks add up to, so a header that claims
+        more data than the file holds is refused before anything is allocated.
+        The checks on the result, and the errors and warnings for a data block
+        that is too short or too long, are the same as with one thread. A file
+        that is not a clean run of BGZF blocks is read on one thread.
         """
         if self._threads == 1:
             super()._read_data()
             return
+        total = self._uncompressed_size_from_trailer()
+        if self.header is None or total is None:
+            super()._read_data()
+            return
+        header_size = self.header.nbytes + int(self.header.nsymbt)
         self._trailing_bytes = None
-        self._read_data_from_stream(max_bytes=0)
+        self._read_data_from_stream(max_bytes=total - header_size)
         if self.data is not None:
             extra = self._trailing_bytes
             if extra is None:  # the file was read on one thread after all

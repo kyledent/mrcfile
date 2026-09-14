@@ -43,6 +43,13 @@ def _load_zstd() -> Any:
 #: The Zstandard module in use, or :data:`None` if none is available.
 _zstd: Any = _load_zstd()
 
+#: The most a Zstandard file is taken to expand when decompressed. No block holds
+#: more than 128 KiB, and the smallest block that decodes to that many bytes takes
+#: 4, so data never decompresses to more than 32768 times its compressed size.
+#: This allows twice that. It only guards against a header that claims far more
+#: data than the file could hold.
+_MAX_EXPANSION = 1 << 16
+
 
 class ZstdMrcFile(MrcFile):
     """:class:`~mrcfile.mrcfile.MrcFile` subclass for handling Zstandard-compressed
@@ -151,17 +158,27 @@ class ZstdMrcFile(MrcFile):
     def _read_data(self) -> None:
         """Read the data block in a single forward decompression pass.
 
-        A Zstandard stream written without a known size records no content length,
-        so there is no cheap way to cap the read in advance. The data block is read
-        without a cap, and any bytes after it are counted by reading forwards
-        rather than by rewinding.
+        A Zstandard stream written without a known size records no content
+        length, so the data block cannot cheaply be checked against the file's
+        true length. It is checked instead against the most the file could
+        decompress to, :data:`_MAX_EXPANSION` times its compressed size, which
+        refuses a header that claims far more data than the file holds before
+        anything is allocated. Such a header is then measured exactly, as
+        :class:`~mrcfile.mrcfile.MrcFile` does, so that the error is the same.
+        Any bytes after the data block are counted by reading forwards rather
+        than by rewinding.
         """
         if self.header is None:
             raise RuntimeError(
                 "Cannot read data from an uninitialised or closed MRC object"
             )
-        # max_bytes of 0 means "no limit" to _read_data_from_stream
-        super(MrcFile, self)._read_data_from_stream(max_bytes=0)
+        needed = utils.data_block_nbytes(self.header)
+        limit = os.fstat(self._fileobj.fileno()).st_size * _MAX_EXPANSION
+        if needed is None or needed > limit:
+            super()._read_data()
+            return
+
+        self._read_data_from_stream(max_bytes=limit)
 
         if self.data is not None:
             extra = self._count_remaining_bytes()
